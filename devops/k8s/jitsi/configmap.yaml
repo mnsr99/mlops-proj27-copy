@@ -4,7 +4,7 @@ metadata:
   name: jitsi-config
   namespace: jitsi
 data:
-  PUBLIC_URL: "http://<REPLACE_WITH_YOUR_FLOATING_IP>"
+  PUBLIC_URL: "https://A-B-C-D.nip.io"
   XMPP_SERVER: "prosody"
   XMPP_DOMAIN: "meet.jitsi"
   XMPP_AUTH_DOMAIN: "auth.meet.jitsi"
@@ -15,3 +15,5 @@ data:
   JVB_STUN_SERVERS: "meet-jit-si-turnrelay.jitsi.net:443"
   TZ: "America/New_York"
   JICOFO_AUTH_USER: "focus"
+  DISABLE_HTTPS: "1"
+  ENABLE_HTTP_REDIRECT: "0"

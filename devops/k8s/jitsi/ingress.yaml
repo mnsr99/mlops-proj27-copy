@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jitsi-ingress
+  namespace: jitsi
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+spec:
+  tls:
+  - hosts:
+    - A-B-C-D.nip.io
+    secretName: jitsi-tls
+  rules:
+  - host: A-B-C-D.nip.io
+    http:
+      paths:
+      - path: /xmpp-websocket
+        pathType: Prefix
+        backend:
+          service:
+            name: prosody
+            port:
+              number: 5280
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              number: 80

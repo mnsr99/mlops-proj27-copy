@@ -13,6 +13,8 @@ spec:
       labels:
         app: jvb
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
       - name: jvb
         image: jitsi/jvb:stable
@@ -21,6 +23,11 @@ spec:
             name: jitsi-config
         - secretRef:
             name: jitsi-secrets
+        env:
+        - name: JVB_ADVERTISE_IPS
+          value: "<FLOATING_IP>"
+        - name: XMPP_SERVER
+          value: "<PROSODY_CLUSTER_IP>"
         ports:
         - containerPort: 10000
           protocol: UDP
@@ -32,18 +39,3 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: jvb
-  namespace: jitsi
-spec:
-  selector:
-    app: jvb
-  ports:
-  - name: media
-    port: 10000
-    protocol: UDP
-  - name: http
-    port: 8080
