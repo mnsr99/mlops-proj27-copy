@@ -1,36 +1,52 @@
-task_name: meeting_summarization
+candidate_name: baseline_bart_local
+seed: 42
 
 mlflow:
-  tracking_uri: "http://129.114.26.89:8000"
-  experiment_name: "jitsi-summarization-v2"
+  tracking_uri: "http://129.114.27.10:5000"
+  experiment_name: "jitsi-summarization"
+  run_name: "bart_baseline_local_run"
 
 data:
-  dataset_name: "MeetingBank"
-  train_file: ""
-  val_file: ""
-  test_file: ""
-  text_column: "transcript"
-  summary_column: "summary"
-  max_train_samples: 1000
-  max_val_samples: 100
-  max_test_samples: 100
+  dataset_name: null
+  dataset_config: null
+
+  train_file: "data/sample_retraining_data.jsonl"
+  validation_file: null
+  test_file: null
+
+  text_column: "input_transcript"
+  summary_column: "target_summary"
+
+  validation_split: 0.34
+  make_test_from_validation: false
+
+  max_train_samples: 3
+  max_eval_samples: 1
+  max_test_samples: null
 
 model:
-  model_name: "google/flan-t5-base"
-  max_input_length: 1024
+  model_name: "facebook/bart-base"
+  source_prefix: "summarize: "
+  max_source_length: 512
   max_target_length: 128
 
 train:
-  output_dir: "./outputs"
+  output_dir: "outputs/bart_baseline"
+  learning_rate: 3.0e-5
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 1
   num_train_epochs: 1
-  learning_rate: 2e-5
-  per_device_train_batch_size: 2
-  per_device_eval_batch_size: 2
   weight_decay: 0.01
-  logging_steps: 10
+  warmup_ratio: 0.05
+  fp16: false
+
   eval_strategy: "epoch"
   save_strategy: "epoch"
-  seed: 42
+  logging_strategy: "steps"
+  logging_steps: 1
+  save_total_limit: 2
 
-run:
-  candidate_name: "baseline"
+  metric_for_best_model: "eval_rougeL"
+  greater_is_better: true
+  generation_num_beams: 4
