@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# storage.yaml — reconfigure k3s local-path provisioner to use /mnt/block
+#
+# k3s ships with a `local-path` StorageClass (default). By default it carves
+# PVCs out of /var/lib/rancher/k3s/storage — which lives on the VM root disk
+# and will NOT survive a VM rebuild.
+#
+# We override it to carve PVCs out of /mnt/block, which is backed by a
+# Chameleon Cinder volume (proj27-platform, 100GB). Every PVC we create from
+# here on lands under /mnt/block/<pvc-name>, giving us per-service
+# subdirectory isolation on a single persistent volume.
+# ---------------------------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: local-path-config
+  namespace: kube-system
+data:
+  config.json: |-
+    {
+      "nodePathMap": [
+        {
+          "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+          "paths": ["/mnt/block"]
+        }
+      ]
+    }
+  setup: |-
+    #!/bin/sh
+    set -eu
+    mkdir -m 0777 -p "$VOL_DIR"
+  teardown: |-
+    #!/bin/sh
+    set -eu
+    rm -rf "$VOL_DIR"
+  helperPod.yaml: |-
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: helper-pod
+    spec:
+      containers:
+      - name: helper-pod
+        image: busybox
+        imagePullPolicy: IfNotPresent
