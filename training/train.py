@@ -331,7 +331,6 @@ def train(cfg: Dict[str, Any]) -> None:
             args=training_args,
             train_dataset=tokenized_ds["train"],
             eval_dataset=tokenized_ds["validation"],
-            processing_class=tokenizer if hasattr(Seq2SeqTrainer, "processing_class") else None,
             processing_class=tokenizer,
             data_collator=data_collator,
             compute_metrics=compute_metrics_builder(tokenizer),
