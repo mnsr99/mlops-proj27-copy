@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------
+# Build and push container images to GitHub Container Registry (GHCR).
+#
+# Triggers:
+#   - Push to main touching data/api/** or serving/**
+#   - Manual dispatch (re-build on demand)
+#
+# Images produced (public):
+#   ghcr.io/haowu0521/mlops-proj27/data-api:<tag>
+#   ghcr.io/haowu0521/mlops-proj27/serving-baseline:<tag>
+#
+# Tags: `latest` (always) + `<git-sha>` (pinnable).
+#
+# Auth: GITHUB_TOKEN is issued per-run and has `packages: write` here.
+# No manual secrets to configure.
+# ---------------------------------------------------------------------------
+name: build-images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'data/api/**'
+      - 'serving/**'
+      - '.github/workflows/build-images.yml'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  data-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push data-api
+        uses: docker/build-push-action@v5
+        with:
+          context: ./data/api
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/data-api:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}/data-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  serving-baseline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push serving-baseline
+        uses: docker/build-push-action@v5
+        with:
+          context: ./serving/baseline
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}/serving-baseline:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}/serving-baseline:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
