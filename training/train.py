@@ -306,7 +306,7 @@ def train(cfg: Dict[str, Any]) -> None:
     output_dir=output_dir,
     do_train=True,
     do_eval=True,
-    evaluation_strategy=cfg["train"].get("eval_strategy", "epoch"),
+    eval_strategy=cfg["train"].get("eval_strategy", "epoch"),
     save_strategy=cfg["train"].get("save_strategy", "epoch"),
     logging_strategy=cfg["train"].get("logging_strategy", "steps"),
     logging_steps=cfg["train"].get("logging_steps", 10),
