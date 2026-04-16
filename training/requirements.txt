@@ -8,3 +8,4 @@ rouge_score
 accelerate
 torch
 sentencepiece
+boto3
