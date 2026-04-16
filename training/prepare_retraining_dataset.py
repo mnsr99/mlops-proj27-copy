@@ -31,11 +31,6 @@ def load_json_records(path: str) -> List[Dict[str, Any]]:
 
 
 def choose_target_summary(record: Dict[str, Any], min_rating_for_unedited: int) -> Tuple[bool, str]:
-    """
-    返回:
-    - 是否保留该样本
-    - 如果保留，使用哪个 target_summary
-    """
     transcript = str(record.get("transcript", "")).strip()
     original_summary = str(record.get("original_summary", "")).strip()
     edited_summary = str(record.get("edited_summary", "")).strip()
