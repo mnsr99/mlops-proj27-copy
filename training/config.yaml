@@ -2,7 +2,7 @@ candidate_name: baseline_bart_local
 seed: 42
 
 mlflow:
-  tracking_uri: "http://129.114.27.10:8000"
+  tracking_uri: "http://129.114.26.182:30500/"
   experiment_name: "jitsi-summarization"
   run_name: "bart_baseline_local_run"
 
