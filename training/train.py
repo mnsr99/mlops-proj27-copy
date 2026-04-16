@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import argparse
 import json
 import os
@@ -11,6 +9,7 @@ from typing import Any, Dict, Optional
 import evaluate
 import mlflow
 import numpy as np
+import pandas as pd
 import torch
 import yaml
 from datasets import DatasetDict, load_dataset
@@ -20,6 +19,7 @@ from transformers import (
     DataCollatorForSeq2Seq,
     Seq2SeqTrainer,
     Seq2SeqTrainingArguments,
+    pipeline,
 )
 
 
@@ -217,6 +217,78 @@ def compute_metrics_builder(tokenizer):
     return compute_metrics
 
 
+class SummarizationPyFuncModel(mlflow.pyfunc.PythonModel):
+    def load_context(self, context):
+        model_dir = context.artifacts["hf_model_dir"]
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_dir)
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+        self.pipe = pipeline(
+            "summarization",
+            model=self.model,
+            tokenizer=self.tokenizer,
+            device=-1,
+        )
+
+    def predict(self, context, model_input, params=None):
+        if isinstance(model_input, pd.DataFrame):
+            if "text" in model_input.columns:
+                texts = model_input["text"].astype(str).tolist()
+            else:
+                texts = model_input.iloc[:, 0].astype(str).tolist()
+        elif isinstance(model_input, list):
+            texts = [str(x) for x in model_input]
+        else:
+            texts = [str(model_input)]
+
+        outputs = self.pipe(texts, truncation=True, max_new_tokens=128)
+
+        summaries = []
+        for out in outputs:
+            if isinstance(out, list):
+                out = out[0]
+            if isinstance(out, dict) and "summary_text" in out:
+                summaries.append(out["summary_text"])
+            else:
+                summaries.append(str(out))
+
+        return pd.DataFrame({"summary": summaries})
+
+
+def log_and_optionally_register_model(output_dir: str, cfg: Dict[str, Any], run_id: str):
+    registered_model_name = (
+        cfg.get("mlflow", {}).get("registered_model_name")
+        or os.environ.get("MLFLOW_REGISTERED_MODEL_NAME")
+    )
+
+    input_example = pd.DataFrame(
+        {
+            "text": [
+                "Alice: We need to finish the UI this week. Bob: I will handle the backend API."
+            ]
+        }
+    )
+
+    model_info = mlflow.pyfunc.log_model(
+        artifact_path="registered_model",
+        python_model=SummarizationPyFuncModel(),
+        artifacts={"hf_model_dir": str(Path(output_dir).resolve())},
+        input_example=input_example,
+        pip_requirements=[
+            "mlflow",
+            "transformers",
+            "torch",
+            "sentencepiece",
+            "pandas",
+        ],
+        registered_model_name=registered_model_name,
+    )
+
+    model_uri = f"runs:/{run_id}/registered_model"
+    return model_uri, registered_model_name, model_info
+
+
 def train(cfg: Dict[str, Any]) -> None:
     seed = cfg.get("seed", 42)
     torch.manual_seed(seed)
@@ -236,7 +308,9 @@ def train(cfg: Dict[str, Any]) -> None:
     device_info = get_device_info()
     git_sha = get_git_sha()
 
-    with mlflow.start_run(run_name=run_name):
+    with mlflow.start_run(run_name=run_name) as active_run:
+        run_id = active_run.info.run_id
+
         mlflow.log_param("candidate_name", cfg["candidate_name"])
         mlflow.log_param("git_sha", git_sha)
 
@@ -303,28 +377,28 @@ def train(cfg: Dict[str, Any]) -> None:
         ensure_output_dir(output_dir)
 
         training_args = Seq2SeqTrainingArguments(
-    output_dir=output_dir,
-    do_train=True,
-    do_eval=True,
-    eval_strategy=cfg["train"].get("eval_strategy", "epoch"),
-    save_strategy=cfg["train"].get("save_strategy", "epoch"),
-    logging_strategy=cfg["train"].get("logging_strategy", "steps"),
-    logging_steps=cfg["train"].get("logging_steps", 10),
-    learning_rate=cfg["train"]["learning_rate"],
-    per_device_train_batch_size=cfg["train"]["per_device_train_batch_size"],
-    per_device_eval_batch_size=cfg["train"]["per_device_eval_batch_size"],
-    weight_decay=cfg["train"].get("weight_decay", 0.0),
-    num_train_epochs=cfg["train"]["num_train_epochs"],
-    predict_with_generate=True,
-    fp16=cfg["train"].get("fp16", False) and torch.cuda.is_available(),
-    gradient_accumulation_steps=cfg["train"].get("gradient_accumulation_steps", 1),
-    warmup_ratio=cfg["train"].get("warmup_ratio", 0.0),
-    load_best_model_at_end=True,
-    metric_for_best_model=cfg["train"].get("metric_for_best_model", "eval_rougeL"),
-    greater_is_better=cfg["train"].get("greater_is_better", True),
-    save_total_limit=cfg["train"].get("save_total_limit", 2),
-    report_to=[],
-)
+            output_dir=output_dir,
+            do_train=True,
+            do_eval=True,
+            eval_strategy=cfg["train"].get("eval_strategy", "epoch"),
+            save_strategy=cfg["train"].get("save_strategy", "epoch"),
+            logging_strategy=cfg["train"].get("logging_strategy", "steps"),
+            logging_steps=cfg["train"].get("logging_steps", 10),
+            learning_rate=cfg["train"]["learning_rate"],
+            per_device_train_batch_size=cfg["train"]["per_device_train_batch_size"],
+            per_device_eval_batch_size=cfg["train"]["per_device_eval_batch_size"],
+            weight_decay=cfg["train"].get("weight_decay", 0.0),
+            num_train_epochs=cfg["train"]["num_train_epochs"],
+            predict_with_generate=True,
+            fp16=cfg["train"].get("fp16", False) and torch.cuda.is_available(),
+            gradient_accumulation_steps=cfg["train"].get("gradient_accumulation_steps", 1),
+            warmup_ratio=cfg["train"].get("warmup_ratio", 0.0),
+            load_best_model_at_end=True,
+            metric_for_best_model=cfg["train"].get("metric_for_best_model", "eval_rougeL"),
+            greater_is_better=cfg["train"].get("greater_is_better", True),
+            save_total_limit=cfg["train"].get("save_total_limit", 2),
+            report_to=[],
+        )
 
         trainer = Seq2SeqTrainer(
             model=model,
@@ -384,9 +458,18 @@ def train(cfg: Dict[str, Any]) -> None:
 
         mlflow.log_artifact(str(config_dump_path))
 
+        model_uri, registered_model_name, _ = log_and_optionally_register_model(
+            output_dir=output_dir,
+            cfg=cfg,
+            run_id=run_id,
+        )
+
         print("\nTraining finished successfully.")
         print(f"Model saved to: {output_dir}")
         print(f"MLflow experiment: {experiment_name}")
+        print(f"MLflow model URI: {model_uri}")
+        if registered_model_name:
+            print(f"Registered model name: {registered_model_name}")
         if tracking_uri:
             print(f"MLflow tracking URI: {tracking_uri}")
 
@@ -409,4 +492,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
