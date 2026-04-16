@@ -77,6 +77,7 @@ sudo chmod 644 /etc/rancher/k3s/k3s.yaml || true
 
 # Add helm repos
 $HELM repo add bitnami https://charts.bitnami.com/bitnami >/dev/null 2>&1 || true
+$HELM repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 $HELM repo update >/dev/null
 
 # ------------------------------------------------------------------
@@ -142,13 +143,23 @@ $KUBECTL -n platform wait --for=condition=complete --timeout=5m job/minio-create
 # ------------------------------------------------------------------
 # 7. Deploy MLflow (depends on Postgres + MinIO)
 # ------------------------------------------------------------------
-echo "[7/9] Deploying MLflow ..."
+echo "[7/10] Deploying MLflow ..."
 $KUBECTL apply -f "$K8S_DIR/mlflow/mlflow.yaml"
 
 # ------------------------------------------------------------------
-# 8. Deploy Jitsi (substitute placeholders then apply)
+# 8. Deploy monitoring (Prometheus + Grafana)
 # ------------------------------------------------------------------
-echo "[8/9] Deploying Jitsi ..."
+echo "[8/10] Deploying Prometheus + Grafana ..."
+$KUBECTL create namespace monitoring --dry-run=client -o yaml | $KUBECTL apply -f -
+$HELM upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+    -n monitoring \
+    -f "$K8S_DIR/monitoring/values.yaml" \
+    --wait --timeout 10m
+
+# ------------------------------------------------------------------
+# 9. Deploy Jitsi (substitute placeholders then apply)
+# ------------------------------------------------------------------
+echo "[9/10] Deploying Jitsi ..."
 
 PROSODY_CLUSTER_IP=""
 
@@ -179,9 +190,9 @@ apply_jitsi_manifest "$K8S_DIR/jitsi/web.yaml"
 apply_jitsi_manifest "$K8S_DIR/jitsi/ingress.yaml"
 
 # ------------------------------------------------------------------
-# 9. Verify
+# 10. Verify
 # ------------------------------------------------------------------
-echo "[9/9] Waiting for all deployments ..."
+echo "[10/10] Waiting for all deployments ..."
 
 for deploy in prosody jicofo jvb web; do
     until $KUBECTL get deployment "$deploy" -n jitsi 2>/dev/null | grep -q "1/1"; do
@@ -205,5 +216,7 @@ echo ""
 echo " Jitsi         : https://$NIP_DOMAIN"
 echo " MLflow        : http://$FLOATING_IP:30500"
 echo " MinIO console : http://$FLOATING_IP:30901"
+echo " Grafana       : http://$FLOATING_IP:30300 (admin / admin123)"
+echo " Prometheus    : http://$FLOATING_IP:30090"
 echo " Postgres      : postgres-postgresql.platform.svc.cluster.local:5432 (in-cluster only)"
 echo "============================================"

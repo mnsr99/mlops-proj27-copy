@@ -1,0 +1,94 @@
+# ---------------------------------------------------------------------------
+# monitoring/values.yaml — Helm values for kube-prometheus-stack
+#
+# Deploy:
+#   helm install monitoring prometheus-community/kube-prometheus-stack \
+#     -n monitoring --create-namespace -f monitoring/values.yaml
+#
+# Provides:
+#   - Prometheus (metrics collection)
+#   - Grafana (dashboards) — exposed at NodePort 30300
+#   - node-exporter (host-level metrics)
+#   - kube-state-metrics (K8s object metrics)
+#
+# Disabled (not needed for coursework demo):
+#   - AlertManager
+# ---------------------------------------------------------------------------
+
+# --- Grafana ---
+grafana:
+  adminUser: admin
+  adminPassword: admin123
+
+  service:
+    type: NodePort
+    nodePort: 30300
+
+  # Lightweight resource limits for single-node VM
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+
+  # Pre-loaded dashboards for the demo
+  defaultDashboardsEnabled: true
+  defaultDashboardsTimezone: America/New_York
+
+# --- Prometheus ---
+prometheus:
+  service:
+    type: NodePort
+    nodePort: 30090
+
+  prometheusSpec:
+    # Scrape all namespaces (jitsi, platform, serving, kube-system)
+    podMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelectorNilUsesHelmValues: false
+
+    # Retain 7 days of metrics (enough for demo + testing)
+    retention: 7d
+
+    # Use local-path PVC on /mnt/block for persistence
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+
+# --- AlertManager (disabled) ---
+alertmanager:
+  enabled: false
+
+# --- node-exporter (lightweight) ---
+nodeExporter:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "32Mi"
+    limits:
+      cpu: "200m"
+      memory: "64Mi"
+
+# --- kube-state-metrics (lightweight) ---
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "32Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
