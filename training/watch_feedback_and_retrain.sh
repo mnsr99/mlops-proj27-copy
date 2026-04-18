@@ -46,12 +46,22 @@ run_retraining() {
   echo "[$(date '+%F %T')] Change detected. Starting retraining..." | tee -a "$RUN_LOG"
 
   if [[ -x "./run_retraining.sh" ]]; then
-    ./run_retraining.sh "$FEEDBACK_FILE" "$BASE_CONFIG" >> "$RUN_LOG" 2>&1
+    if ./run_retraining.sh "$FEEDBACK_FILE" "$BASE_CONFIG" >> "$RUN_LOG" 2>&1; then
+      echo "[$(date '+%F %T')] Retraining finished successfully." | tee -a "$RUN_LOG"
+      return 0
+    else
+      echo "[$(date '+%F %T')] Retraining failed." | tee -a "$RUN_LOG"
+      return 1
+    fi
   else
-    bash ./run_retraining.sh "$FEEDBACK_FILE" "$BASE_CONFIG" >> "$RUN_LOG" 2>&1
+    if bash ./run_retraining.sh "$FEEDBACK_FILE" "$BASE_CONFIG" >> "$RUN_LOG" 2>&1; then
+      echo "[$(date '+%F %T')] Retraining finished successfully." | tee -a "$RUN_LOG"
+      return 0
+    else
+      echo "[$(date '+%F %T')] Retraining failed." | tee -a "$RUN_LOG"
+      return 1
+    fi
   fi
-
-  echo "[$(date '+%F %T')] Retraining finished." | tee -a "$RUN_LOG"
 }
 
 CURRENT_HASH="$(hash_file "$FEEDBACK_FILE")"
