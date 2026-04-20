@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS action_items (
 
 CREATE TABLE IF NOT EXISTS reviews (
     review_id UUID PRIMARY KEY,
-    meeting_id REFERENCES meetings(meeting_id),
+    meeting_id UUID REFERENCES meetings(meeting_id),
     reviewer_id TEXT NOT NULL,
     rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
     approved BOOLEAN NOT NULL,
