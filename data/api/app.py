@@ -267,10 +267,41 @@ def get_review(review_id: str):
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            SELECT review_id, meeting_id, edited_summary, edited_action_items,
-                   rating, edited_flag, approved, created_at
-            FROM reviews
-            WHERE review_id = %s
+            SELECT
+                r.review_id,
+                r.meeting_id,
+                t.transcript_text AS transcript,
+                s.summary_text AS original_summary,
+                a.item_text AS original_action_items,
+                r.edited_summary,
+                r.edited_action_items,
+                r.rating,
+                r.edited_flag,
+                r.approved,
+                r.created_at
+            FROM reviews r
+            LEFT JOIN LATERAL (
+                SELECT transcript_text
+                FROM transcripts
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, transcript_id DESC
+                LIMIT 1
+            ) t ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT summary_text
+                FROM summaries
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, summary_id DESC
+                LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT item_text
+                FROM action_items
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, action_item_id DESC
+                LIMIT 1
+            ) a ON TRUE
+            WHERE r.review_id = %s
             """,
             (review_id,),
         )
@@ -282,12 +313,15 @@ def get_review(review_id: str):
     return {
         "review_id": str(row[0]),
         "meeting_id": str(row[1]),
-        "edited_summary": row[2],
-        "edited_action_items": row[3],
-        "rating": row[4],
-        "edited_flag": row[5],
-        "approved": row[6],
-        "created_at": row[7],
+        "transcript": row[2],
+        "original_summary": row[3],
+        "original_action_items": row[4],
+        "edited_summary": row[5],
+        "edited_action_items": row[6],
+        "rating": row[7],
+        "edited_flag": row[8],
+        "approved": row[9],
+        "created_at": row[10],
     }
 
 @app.get("/reviews/by_meeting/{meeting_id}")
@@ -295,11 +329,42 @@ def get_reviews_by_meeting(meeting_id: str):
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            SELECT review_id, meeting_id, edited_summary, edited_action_items,
-                   rating, edited_flag, approved, created_at
-            FROM reviews
-            WHERE meeting_id = %s
-            ORDER BY created_at DESC
+            SELECT
+                r.review_id,
+                r.meeting_id,
+                t.transcript_text AS transcript,
+                s.summary_text AS original_summary,
+                a.item_text AS original_action_items,
+                r.edited_summary,
+                r.edited_action_items,
+                r.rating,
+                r.edited_flag,
+                r.approved,
+                r.created_at
+            FROM reviews r
+            LEFT JOIN LATERAL (
+                SELECT transcript_text
+                FROM transcripts
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, transcript_id DESC
+                LIMIT 1
+            ) t ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT summary_text
+                FROM summaries
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, summary_id DESC
+                LIMIT 1
+            ) s ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT item_text
+                FROM action_items
+                WHERE meeting_id = r.meeting_id
+                ORDER BY created_at DESC, action_item_id DESC
+                LIMIT 1
+            ) a ON TRUE
+            WHERE r.meeting_id = %s
+            ORDER BY r.created_at DESC, r.review_id DESC
             """,
             (meeting_id,),
         )
@@ -312,12 +377,15 @@ def get_reviews_by_meeting(meeting_id: str):
         {
             "review_id": str(row[0]),
             "meeting_id": str(row[1]),
-            "edited_summary": row[2],
-            "edited_action_items": row[3],
-            "rating": row[4],
-            "edited_flag": row[5],
-            "approved": row[6],
-            "created_at": row[7],
+            "transcript": row[2],
+            "original_summary": row[3],
+            "original_action_items": row[4],
+            "edited_summary": row[5],
+            "edited_action_items": row[6],
+            "rating": row[7],
+            "edited_flag": row[8],
+            "approved": row[9],
+            "created_at": row[10],
         }
         for row in rows
     ]
