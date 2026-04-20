@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# jibri.yaml — Jitsi Broadcasting Infrastructure (meeting recording)
+#
+# Runs privileged to access /dev/snd (snd-aloop audio loopback).
+# Records to /config/recordings (emptyDir), finalize.sh uploads to MinIO
+# recordings bucket then cleans up.
+# ---------------------------------------------------------------------------
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jibri-finalize
+  namespace: jitsi
+data:
+  finalize.sh: |
+    #!/bin/bash
+    # $1 = path to recording directory
+    set -eu
+    RECORDING_DIR="$1"
+    echo "[finalize] uploading contents of $RECORDING_DIR to MinIO..."
+
+    # Install mc on first run (image has curl)
+    if ! command -v mc >/dev/null 2>&1; then
+      curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc \
+        -o /usr/local/bin/mc
+      chmod +x /usr/local/bin/mc
+    fi
+
+    mc alias set platform \
+      http://minio.platform.svc.cluster.local:9000 \
+      minio minio123
+
+    # Upload every file under the recording dir, keep its basename
+    for f in "$RECORDING_DIR"/*; do
+      [ -e "$f" ] || continue
+      BASENAME=$(basename "$f")
+      TS=$(date +%Y%m%d-%H%M%S)
+      mc cp "$f" "platform/recordings/${TS}-${BASENAME}"
+      echo "[finalize] uploaded ${TS}-${BASENAME}"
+    done
+
+    # Clean up local copy
+    rm -rf "$RECORDING_DIR"
+    echo "[finalize] done."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jibri
+  namespace: jitsi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jibri
+  template:
+    metadata:
+      labels:
+        app: jibri
+    spec:
+      containers:
+      - name: jibri
+        image: jitsi/jibri:stable
+        securityContext:
+          privileged: true
+        envFrom:
+        - configMapRef:
+            name: jitsi-config
+        - secretRef:
+            name: jitsi-secrets
+        env:
+        - name: DISPLAY
+          value: ":0"
+        volumeMounts:
+        - name: dev-snd
+          mountPath: /dev/snd
+        - name: recordings
+          mountPath: /config/recordings
+        - name: finalize
+          mountPath: /config/finalize.sh
+          subPath: finalize.sh
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2000m"
+            memory: "3Gi"
+      volumes:
+      - name: dev-snd
+        hostPath:
+          path: /dev/snd
+      - name: recordings
+        emptyDir: {}
+      - name: finalize
+        configMap:
+          name: jibri-finalize
+          defaultMode: 0755
