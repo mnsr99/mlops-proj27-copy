@@ -1,3 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prosody-recorder
+  namespace: jitsi
+data:
+  recorder.cfg.lua: |
+    VirtualHost "recorder.meet.jitsi"
+        modules_enabled = {
+          "ping";
+        }
+        authentication = "internal_hashed"
+  10-register-recorder.sh: |
+    #!/usr/bin/with-contenv bash
+    set -eu
+    # Wait a moment for prosody filesystem layout
+    mkdir -p /config/data
+    # Register recorder user on recorder.meet.jitsi
+    prosodyctl --config /config/prosody.cfg.lua register recorder recorder.meet.jitsi "$JIBRI_RECORDER_PASSWORD" || true
+    # Register jibri user on auth.meet.jitsi (control user)
+    prosodyctl --config /config/prosody.cfg.lua register jibri auth.meet.jitsi "$JIBRI_XMPP_PASSWORD" || true
+    echo "[cont-init] recorder & jibri users registered"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,6 +55,18 @@ spec:
           limits:
             cpu: "200m"
             memory: "256Mi"
+        volumeMounts:
+        - name: recorder-vhost
+          mountPath: /defaults/conf.d/recorder.cfg.lua
+          subPath: recorder.cfg.lua
+        - name: recorder-vhost
+          mountPath: /etc/cont-init.d/10-register-recorder
+          subPath: 10-register-recorder.sh
+      volumes:
+      - name: recorder-vhost
+        configMap:
+          name: prosody-recorder
+          defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
