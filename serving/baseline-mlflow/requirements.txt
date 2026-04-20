@@ -6,8 +6,12 @@ mlflow==2.19.0
 pandas==2.2.3
 boto3==1.35.36
 
-# Model flavor deps. NOTE: torch is installed separately in the Dockerfile
-# from the CPU-only wheel index to avoid pulling ~2GB of CUDA runtime we
-# will never use on a k3s CPU node.
-transformers==4.45.2
-sentencepiece==0.2.0
+# Model flavor deps. Unpinned to match the MLflow-captured training env,
+# which itself leaves these unpinned — pinning them here caused
+# ModuleNotFoundError: transformers.core_model_loading at load time because
+# the pickled model referenced a newer internal layout.
+# NOTE: torch is installed separately in the Dockerfile from the CPU-only
+# wheel index to avoid pulling ~2GB of CUDA runtime we will never use on
+# the k3s CPU node.
+transformers
+sentencepiece
