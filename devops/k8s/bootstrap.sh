@@ -46,6 +46,26 @@ if ! mountpoint -q /mnt/block; then
 fi
 echo "[0/9] /mnt/block is mounted. $(df -h /mnt/block | tail -1 | awk '{print $4" free"}')"
 
+# ---------------------------------------------------------------------------
+# Step 0: Load snd-aloop kernel module for Jibri audio loopback (idempotent)
+# ---------------------------------------------------------------------------
+echo ">>> Ensuring snd-aloop kernel module is loaded..."
+
+if ! lsmod | grep -q snd_aloop; then
+  sudo modprobe snd-aloop
+  echo "    Loaded snd-aloop."
+else
+  echo "    snd-aloop already loaded."
+fi
+
+# Persist across reboots
+if [ ! -f /etc/modules-load.d/snd-aloop.conf ]; then
+  echo "snd-aloop" | sudo tee /etc/modules-load.d/snd-aloop.conf >/dev/null
+  echo "options snd-aloop enable=1,1,1,1,1,1,1,1 index=0,1,2,3,4,5,6,7" | \
+    sudo tee /etc/modprobe.d/alsa-loopback.conf >/dev/null
+  echo "    Configured snd-aloop to load on boot."
+fi
+
 # ------------------------------------------------------------------
 # 1. Install k3s (skip if already installed)
 # ------------------------------------------------------------------
@@ -119,6 +139,25 @@ $KUBECTL create secret tls jitsi-tls \
     -n jitsi --dry-run=client -o yaml | $KUBECTL apply -f -
 rm -rf "$TLS_DIR"
 
+# ---------------------------------------------------------------------------
+# Step 6: Ensure Jibri XMPP passwords exist in jitsi-secrets (idempotent)
+# ---------------------------------------------------------------------------
+echo ">>> Ensuring Jibri passwords in jitsi-secrets..."
+
+# Check if the key already exists in the secret
+if sudo kubectl get secret jitsi-secrets -n jitsi \
+     -o jsonpath='{.data.JIBRI_XMPP_PASSWORD}' 2>/dev/null | grep -q .; then
+  echo "    JIBRI_XMPP_PASSWORD already set — skipping."
+else
+  JIBRI_PWD=$(openssl rand -hex 16)
+  REC_PWD=$(openssl rand -hex 16)
+  sudo kubectl patch secret jitsi-secrets -n jitsi --type=json -p="[
+    {\"op\":\"add\",\"path\":\"/data/JIBRI_XMPP_PASSWORD\",\"value\":\"$(echo -n $JIBRI_PWD | base64)\"},
+    {\"op\":\"add\",\"path\":\"/data/JIBRI_RECORDER_PASSWORD\",\"value\":\"$(echo -n $REC_PWD | base64)\"}
+  ]"
+  echo "    Generated and stored JIBRI_XMPP_PASSWORD + JIBRI_RECORDER_PASSWORD."
+fi
+
 # ------------------------------------------------------------------
 # 6. Deploy platform services: Postgres + MinIO (via Helm)
 # ------------------------------------------------------------------
@@ -188,13 +227,14 @@ apply_jitsi_manifest "$K8S_DIR/jitsi/jicofo.yaml"
 apply_jitsi_manifest "$K8S_DIR/jitsi/jvb.yaml"
 apply_jitsi_manifest "$K8S_DIR/jitsi/web.yaml"
 apply_jitsi_manifest "$K8S_DIR/jitsi/ingress.yaml"
+apply_jitsi_manifest "$K8S_DIR/jitsi/jibri.yaml"
 
 # ------------------------------------------------------------------
 # 10. Verify
 # ------------------------------------------------------------------
 echo "[10/10] Waiting for all deployments ..."
 
-for deploy in prosody jicofo jvb web; do
+for deploy in prosody jicofo jvb web jibri; do
     until $KUBECTL get deployment "$deploy" -n jitsi 2>/dev/null | grep -q "1/1"; do
         sleep 5
     done

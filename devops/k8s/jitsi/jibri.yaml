@@ -71,6 +71,13 @@ spec:
         env:
         - name: DISPLAY
           value: ":0"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "2Gi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
         volumeMounts:
         - name: dev-snd
           mountPath: /dev/snd
@@ -79,13 +86,8 @@ spec:
         - name: finalize
           mountPath: /config/finalize.sh
           subPath: finalize.sh
-        resources:
-          requests:
-            cpu: "500m"
-            memory: "1Gi"
-          limits:
-            cpu: "2000m"
-            memory: "3Gi"
+        - name: dshm
+          mountPath: /dev/shm
       volumes:
       - name: dev-snd
         hostPath:
@@ -96,3 +98,7 @@ spec:
         configMap:
           name: jibri-finalize
           defaultMode: 0755
+      - name: dshm 
+        emptyDir: 
+          medium: Memory
+          sizeLimit: 2Gi
