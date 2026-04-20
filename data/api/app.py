@@ -31,13 +31,6 @@ class AsrStatus(str, Enum):
     FAILED = "failed"
 
 
-class CorrectionLabel(str, Enum):
-    NONE = "none"
-    MINOR = "minor"
-    MAJOR = "major"
-    REWRITE = "rewrite"
-
-
 app = FastAPI()
 
 
@@ -65,13 +58,10 @@ class SummaryCreate(BaseModel):
 
 class ReviewCreate(BaseModel):
     meeting_id: str
-    reviewer_id: str
     rating: int = Field(ge=1, le=5)
     approved: bool
-    correction_label: CorrectionLabel
     edited_summary: Optional[str] = None
     edited_action_items: Optional[str] = None
-    review_notes: Optional[str] = None
 
 
 @app.get("/health")
@@ -222,6 +212,115 @@ def get_transcript_by_meeting(meeting_id: str):
         "created_at": row[4],
     }
 
+@app.get("/summaries/{summary_id}")
+def get_summary(summary_id: str):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT summary_id, meeting_id, model_version, summary_text, created_at
+            FROM summaries
+            WHERE summary_id = %s
+            """,
+            (summary_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="summary not found")
+
+    return {
+        "summary_id": str(row[0]),
+        "meeting_id": str(row[1]),
+        "model_version": row[2],
+        "summary_text": row[3],
+        "created_at": row[4],
+    }
+
+@app.get("/summaries/by_meeting/{meeting_id}")
+def get_summary_by_meeting(meeting_id: str):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT summary_id, meeting_id, model_version, summary_text, created_at
+            FROM summaries
+            WHERE meeting_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (meeting_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="summary not found")
+
+    return {
+        "summary_id": str(row[0]),
+        "meeting_id": str(row[1]),
+        "model_version": row[2],
+        "summary_text": row[3],
+        "created_at": row[4],
+    }
+
+@app.get("/reviews/{review_id}")
+def get_review(review_id: str):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT review_id, meeting_id, edited_summary, edited_action_items,
+                   rating, edited_flag, approved, created_at
+            FROM reviews
+            WHERE review_id = %s
+            """,
+            (review_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="review not found")
+
+    return {
+        "review_id": str(row[0]),
+        "meeting_id": str(row[1]),
+        "edited_summary": row[2],
+        "edited_action_items": row[3],
+        "rating": row[4],
+        "edited_flag": row[5],
+        "approved": row[6],
+        "created_at": row[7],
+    }
+
+@app.get("/reviews/by_meeting/{meeting_id}")
+def get_reviews_by_meeting(meeting_id: str):
+    with db_cursor() as (_, cur):
+        cur.execute(
+            """
+            SELECT review_id, meeting_id, edited_summary, edited_action_items,
+                   rating, edited_flag, approved, created_at
+            FROM reviews
+            WHERE meeting_id = %s
+            ORDER BY created_at DESC
+            """,
+            (meeting_id,),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="reviews not found")
+
+    return [
+        {
+            "review_id": str(row[0]),
+            "meeting_id": str(row[1]),
+            "edited_summary": row[2],
+            "edited_action_items": row[3],
+            "rating": row[4],
+            "edited_flag": row[5],
+            "approved": row[6],
+            "created_at": row[7],
+        }
+        for row in rows
+    ]
 
 @app.post("/summaries")
 def create_summary(payload: SummaryCreate):
@@ -258,7 +357,6 @@ def create_summary(payload: SummaryCreate):
 
 @app.post("/reviews")
 def create_review(payload: ReviewCreate):
-    # Enrichment fallback only: use latest model summary/action items if missing.
     edited_summary = payload.edited_summary
     edited_action_items = payload.edited_action_items
 
@@ -299,37 +397,34 @@ def create_review(payload: ReviewCreate):
 
     review_id = str(uuid.uuid4())
     now = datetime.now(UTC)
+    edited_flag = True
+
     with db_cursor(commit=True) as (_, cur):
         cur.execute(
             """
             INSERT INTO reviews (
                 review_id,
                 meeting_id,
-                reviewer_id,
-                rating,
-                approved,
-                correction_label,
                 edited_summary,
                 edited_action_items,
-                review_notes,
-                created_at,
-                updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                rating,
+                edited_flag,
+                approved,
+                created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING review_id
             """,
             (
                 review_id,
                 payload.meeting_id,
-                payload.reviewer_id,
-                payload.rating,
-                payload.approved,
-                payload.correction_label.value,
                 edited_summary,
                 edited_action_items,
-                payload.review_notes,
-                now,
+                payload.rating,
+                edited_flag,
+                payload.approved,
                 now,
             ),
         )
         stored_review_id = cur.fetchone()[0]
+
     return {"review_id": str(stored_review_id)}
