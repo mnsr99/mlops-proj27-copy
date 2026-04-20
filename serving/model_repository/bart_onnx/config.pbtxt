@@ -1,0 +1,31 @@
+name: "bart_onnx"
+backend: "python"
+max_batch_size: 16
+
+input [
+  {
+    name: "INPUT_TEXT"
+    data_type: TYPE_STRING
+    dims: [ -1 ]
+  }
+]
+
+output [
+  {
+    name: "OUTPUT_TEXT"
+    data_type: TYPE_STRING
+    dims: [ -1 ]
+  }
+]
+
+instance_group [
+  {
+    count: 1
+    kind: KIND_GPU
+  }
+]
+
+dynamic_batching {
+  preferred_batch_size: [4, 8, 16]
+  max_queue_delay_microseconds: 100
+}
