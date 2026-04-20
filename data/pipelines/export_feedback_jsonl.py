@@ -36,7 +36,7 @@ def maybe_transfer(local_path: str):
     key_path = _env("TRAINING_SSH_KEY_PATH")
     remote_path = _env(
         "FEEDBACK_EXPORT_PATH",
-        "/home/cc/mlops-proj27/training/data/exported_feedback_records.jsonl",
+        "/home/cc/mlops-proj27/training/data/feedback_records.jsonl",
     )
 
     if not host or not user or not key_path:
@@ -253,7 +253,7 @@ def main():
         "local_export_path": local_export_path,
         "remote_export_path": _env(
             "FEEDBACK_EXPORT_PATH",
-            "/home/cc/mlops-proj27/training/data/exported_feedback_records.jsonl",
+            "/home/cc/mlops-proj27/training/data/feedback_records.jsonl",
         ),
         "export_policy": export_policy,
         "records_exported": len(exported),
@@ -269,7 +269,7 @@ def main():
             "TRAINING_SSH_KEY_PATH": _env("TRAINING_SSH_KEY_PATH"),
             "FEEDBACK_EXPORT_PATH": _env(
                 "FEEDBACK_EXPORT_PATH",
-                "/home/cc/mlops-proj27/training/data/exported_feedback_records.jsonl",
+                "/home/cc/mlops-proj27/training/data/feedback_records.jsonl",
             ),
             "LOCAL_FEEDBACK_EXPORT_PATH": _env("LOCAL_FEEDBACK_EXPORT_PATH"),
             "REQUIRE_TRANSCRIPT": require_transcript,
