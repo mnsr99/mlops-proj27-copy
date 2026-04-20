@@ -54,12 +54,27 @@ REQUEST_READ_TIMEOUT = int(os.environ.get("REQUEST_READ_TIMEOUT", "120"))
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".aac", ".webm", ".mp4"}
 
+MEETING_MANIFEST_PATH = Path(
+    os.environ.get("MEETING_MANIFEST_PATH", "data/meeting_manifest.jsonl")
+)
+MEETING_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 _ASR_MODEL = None
 _SUMMARIZATION_MODEL = None
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def append_meeting_manifest(meeting_id: str, object_key: str) -> None:
+    row = {
+        "meeting_id": meeting_id,
+        "audio_object_key": object_key,
+        "created_at": now_iso(),
+    }
+    with MEETING_MANIFEST_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def get_s3_client():
@@ -281,6 +296,10 @@ def create_summary(
     return post_json(f"{DATA_API_BASE}/summaries", payload)
 
 
+def get_summary_by_meeting(meeting_id: str) -> Any:
+    return get_json_or_text(f"{DATA_API_BASE}/summaries/by_meeting/{meeting_id}")
+
+
 def create_review(
     meeting_id: str,
     reviewer_id: str,
@@ -304,13 +323,16 @@ def create_review(
     return post_json(f"{DATA_API_BASE}/reviews", payload)
 
 
+def get_reviews_by_meeting(meeting_id: str) -> Any:
+    return get_json_or_text(f"{DATA_API_BASE}/reviews/by_meeting/{meeting_id}")
+
+
 def extract_meeting_id(meeting_resp: Any) -> str:
     if isinstance(meeting_resp, dict):
         for key in ("meeting_id", "id", "uuid"):
             value = meeting_resp.get(key)
             if value:
                 return str(value)
-
     raise RuntimeError(
         f"Could not find meeting_id in create_meeting response: {meeting_resp}"
     )
@@ -330,6 +352,7 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
 
     meeting_id = extract_meeting_id(meeting_resp)
     print(f"Resolved meeting_id: {meeting_id}", flush=True)
+    append_meeting_manifest(meeting_id, object_key)
 
     try:
         print("\n=== Step 1: Download audio from MinIO ===", flush=True)
@@ -445,6 +468,7 @@ def main():
     print(f"[Config] MINIO_ENDPOINT={MINIO_ENDPOINT}", flush=True)
     print(f"[Config] ASR_MODEL_URI={ASR_MODEL_URI}", flush=True)
     print(f"[Config] SUMMARIZATION_MODEL_URI={SUMMARIZATION_MODEL_URI}", flush=True)
+    print(f"[Config] MEETING_MANIFEST_PATH={MEETING_MANIFEST_PATH}", flush=True)
 
     if object_key:
         object_keys = [object_key]
@@ -463,7 +487,10 @@ def main():
 
     if max_files > 0:
         object_keys = object_keys[:max_files]
-        print(f"[Config] MAX_FILES applied. Will process first {len(object_keys)} file(s).", flush=True)
+        print(
+            f"[Config] MAX_FILES applied. Will process first {len(object_keys)} file(s).",
+            flush=True,
+        )
 
     print(f"[Config] Total audio files to process: {len(object_keys)}", flush=True)
     for idx, key in enumerate(object_keys, start=1):
