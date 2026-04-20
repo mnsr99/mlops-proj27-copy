@@ -204,6 +204,19 @@ $KUBECTL -n platform wait --for=condition=complete --timeout=5m \
     job/data-api-init-db || true
 
 # ------------------------------------------------------------------
+# 7c. Deploy serving-baseline-mlflow (summarizer backed by MLflow registry)
+#
+# Requires:
+#   - MLflow reachable at mlflow.platform.svc.cluster.local:5000
+#   - MinIO credentials Secret (minio-credentials) present in platform ns
+#   - A registered model named 'jitsi-summarizer' with alias 'production'
+#     in MLflow. If missing, the pod will CrashLoopBackOff until the alias
+#     is set — this is intentional (fail loud on missing model).
+# ------------------------------------------------------------------
+echo "[7c/10] Deploying serving-baseline-mlflow ..."
+$KUBECTL apply -f "$K8S_DIR/serving/baseline-mlflow.yaml"
+
+# ------------------------------------------------------------------
 # 8. Deploy monitoring (Prometheus + Grafana)
 # ------------------------------------------------------------------
 echo "[8/10] Deploying Prometheus + Grafana ..."
@@ -259,7 +272,7 @@ for deploy in prosody jicofo jvb web jibri; do
     echo "      jitsi/$deploy: ready"
 done
 
-for deploy in mlflow data-api; do
+for deploy in mlflow data-api serving-baseline-mlflow; do
     until $KUBECTL get deployment "$deploy" -n platform 2>/dev/null | grep -q "1/1"; do
         sleep 5
     done
@@ -276,6 +289,7 @@ echo ""
 echo " Jitsi         : https://$NIP_DOMAIN"
 echo " MLflow        : http://$FLOATING_IP:30500"
 echo " Data API      : http://$FLOATING_IP:30800  (Swagger UI: /docs)"
+echo " Summarizer    : http://$FLOATING_IP:30810  (POST /predict)"
 echo " MinIO console : http://$FLOATING_IP:30901"
 echo " Grafana       : http://$FLOATING_IP:30300 (admin / admin123)"
 echo " Prometheus    : http://$FLOATING_IP:30090"

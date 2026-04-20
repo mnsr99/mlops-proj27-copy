@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.2
+mlflow==2.19.0
+pandas==2.2.3
+boto3==1.35.36
+# Model flavor deps (BART / HF transformers running on CPU).
+# Keep in sync with what's in the MLflow run's requirements.txt.
+torch==2.4.1
+transformers==4.45.2
+sentencepiece==0.2.0

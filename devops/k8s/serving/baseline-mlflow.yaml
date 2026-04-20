@@ -1,0 +1,94 @@
+# ---------------------------------------------------------------------------
+# baseline-mlflow.yaml — Summarizer service that loads the current
+# jitsi-summarizer@production model from the MLflow Registry.
+#
+# Why this and not serving/baseline:
+#   The original serving/baseline image hardcodes a HuggingFace checkpoint,
+#   so retraining has no effect on what production serves. This Deployment
+#   uses the fork at serving/baseline-mlflow/ (built as serving-baseline-mlflow
+#   on GHCR), which pulls the model from MLflow at startup. To roll out a
+#   new model: bump the @production alias in MLflow, then
+#     sudo kubectl rollout restart deployment/serving-baseline-mlflow -n platform
+#
+# Image is built by .github/workflows/build-images.yml and pushed to
+# ghcr.io/haowu0521/mlops-proj27/serving-baseline-mlflow:latest.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: serving-baseline-mlflow
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: serving-baseline-mlflow
+  template:
+    metadata:
+      labels:
+        app: serving-baseline-mlflow
+    spec:
+      containers:
+      - name: serving
+        image: ghcr.io/haowu0521/mlops-proj27/serving-baseline-mlflow:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow.platform.svc.cluster.local:5000"
+        - name: MLFLOW_S3_ENDPOINT_URL
+          value: "http://minio.platform.svc.cluster.local:9000"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: MINIO_ROOT_USER
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-credentials
+              key: MINIO_ROOT_PASSWORD
+        - name: MODEL_NAME
+          value: "jitsi-summarizer"
+        - name: MODEL_ALIAS
+          value: "production"
+        # BART base is ~500MB, plus tokenizer + torch runtime; give it room.
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1500Mi"
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        # Model download + load from MinIO takes a while on cold start —
+        # keep liveness/readiness tolerant.
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 180
+          periodSeconds: 30
+          failureThreshold: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: serving-baseline-mlflow
+  namespace: platform
+spec:
+  selector:
+    app: serving-baseline-mlflow
+  type: NodePort
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    nodePort: 30810
