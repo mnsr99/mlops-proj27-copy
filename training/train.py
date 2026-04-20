@@ -231,7 +231,7 @@ class SummarizationPyFuncModel(mlflow.pyfunc.PythonModel):
             "summarization",
             model=self.model,
             tokenizer=self.tokenizer,
-            device=-1,  # CPU-safe for registry loading
+            device=-1,
         )
 
     def predict(self, context, model_input: pd.DataFrame) -> pd.DataFrame:
@@ -259,11 +259,29 @@ class SummarizationPyFuncModel(mlflow.pyfunc.PythonModel):
         return pd.DataFrame({"summary": summaries})
 
 
-def log_and_optionally_register_model(output_dir: str, run_id: str, cfg: Dict[str, Any]):
+def log_and_optionally_register_model(
+    output_dir: str,
+    run_id: str,
+    cfg: Dict[str, Any],
+    eval_metrics: Dict[str, Any],
+):
     registered_model_name = (
         cfg.get("mlflow", {}).get("registered_model_name")
         or os.environ.get("MLFLOW_REGISTERED_MODEL_NAME")
     )
+
+    quality_gate_metric = cfg["train"].get("quality_gate_metric", "eval_rougeL")
+    quality_gate_threshold = float(cfg["train"].get("quality_gate_threshold", 32.0))
+
+    metric_value = eval_metrics.get(quality_gate_metric)
+    metric_value = float(metric_value) if metric_value is not None else None
+    passed_gate = metric_value is not None and metric_value >= quality_gate_threshold
+
+    mlflow.log_param("quality_gate_metric", quality_gate_metric)
+    mlflow.log_param("quality_gate_threshold", quality_gate_threshold)
+    mlflow.log_param("quality_gate_passed", passed_gate)
+    if metric_value is not None:
+        mlflow.log_metric("quality_gate_metric_value", metric_value)
 
     input_example = pd.DataFrame(
         {
@@ -294,14 +312,14 @@ def log_and_optionally_register_model(output_dir: str, run_id: str, cfg: Dict[st
 
     model_uri = f"runs:/{run_id}/registered_model"
 
-    if registered_model_name:
+    if registered_model_name and passed_gate:
         registration = mlflow.register_model(
             model_uri=model_uri,
             name=registered_model_name,
         )
-        return model_uri, registered_model_name, registration
+        return model_uri, registered_model_name, registration, passed_gate
 
-    return model_uri, None, None
+    return model_uri, None, None, passed_gate
 
 
 def train(cfg: Dict[str, Any]) -> None:
@@ -473,21 +491,26 @@ def train(cfg: Dict[str, Any]) -> None:
 
         mlflow.log_artifact(str(config_dump_path))
 
-        # 记录完整 HF 模型目录，便于后续查看
         mlflow.log_artifacts(output_dir, artifact_path="hf_model_files")
 
-        model_uri, registered_model_name, _ = log_and_optionally_register_model(
+        model_uri, registered_model_name, _, passed_gate = log_and_optionally_register_model(
             output_dir=output_dir,
             run_id=run_id,
             cfg=cfg,
+            eval_metrics=eval_metrics,
         )
 
         print("\nTraining finished successfully.")
         print(f"Model saved to: {output_dir}")
         print(f"MLflow experiment: {experiment_name}")
         print(f"MLflow model URI: {model_uri}")
+        print(f"Quality gate passed: {passed_gate}")
+
         if registered_model_name:
             print(f"Registered model name: {registered_model_name}")
+        else:
+            print("Model was NOT registered because it did not pass the quality gate.")
+
         if tracking_uri:
             print(f"MLflow tracking URI: {tracking_uri}")
 
