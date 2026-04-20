@@ -43,6 +43,32 @@ data:
     rm -rf "$RECORDING_DIR"
     echo "[finalize] done."
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jibri-conf
+  namespace: jitsi
+data:
+  jibri.conf: |
+    jibri {
+      recording {
+        recordings-directory = "/config/recordings"
+        finalize-script = "/config/finalize.sh"
+      }
+      chrome {
+        flags = [
+          "--use-fake-ui-for-media-stream",
+          "--start-maximized",
+          "--kiosk",
+          "--enabled",
+          "--autoplay-policy=no-user-gesture-required",
+          "--ignore-certificate-errors",
+          "--disable-web-security",
+          "--allow-running-insecure-content"
+        ]
+      }
+    }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -88,6 +114,9 @@ spec:
           subPath: finalize.sh
         - name: dshm
           mountPath: /dev/shm
+        - name: jibri-conf
+          mountPath: /etc/jitsi/jibri/jibri.conf
+          subPath: jibri.conf
       volumes:
       - name: dev-snd
         hostPath:
@@ -102,3 +131,6 @@ spec:
         emptyDir: 
           medium: Memory
           sizeLimit: 2Gi
+      - name: jibri-conf
+        configMap:
+          name: jibri-conf
