@@ -13,12 +13,15 @@ RUN apt-get update \
 # Install torch from the CPU-only wheel index first — this avoids pulling
 # the default torch wheel that ships with CUDA runtime (~2GB). The k3s
 # node has no GPU, so we'd be wasting disk and image-pull time.
-# Training pins only mlflow==2.19.0; torch is unpinned upstream, so let pip
-# resolve the latest CPU wheel. Installed from the CPU-only index to avoid
-# pulling ~2GB of CUDA runtime the k3s node can't use.
+# Pin torch to the exact version the training host used (verified via
+# `pip show torch` on /home/cc/.local). Pickle tensors can be sensitive
+# to torch version drift the same way transformers internals are —
+# mismatch tends to surface as obscure ImportError deep in load_state_dict.
+# Installed from the CPU-only index to avoid pulling ~2GB of CUDA runtime
+# the k3s node can't use.
 RUN pip install --no-cache-dir \
       --index-url https://download.pytorch.org/whl/cpu \
-      torch
+      torch==2.11.0
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt

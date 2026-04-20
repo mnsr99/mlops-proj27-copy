@@ -6,15 +6,15 @@ mlflow==2.19.0
 pandas==2.2.3
 boto3==1.35.36
 
-# Model flavor deps. Pinned to a narrow 4.x range to bracket both:
-#   - 4.45.2 (too old): lacks transformers.core_model_loading referenced
-#     by the pickle => ModuleNotFoundError at load.
-#   - 5.x (too new): dropped the "summarization" pipeline task in the
-#     registry refactor => KeyError when load_context calls pipeline(...).
-# 4.48.x still has both; adjust if MLflow's model/conda.yaml captured a
-# different exact training version.
+# Model flavor deps. Pinned to EXACT training-time version (verified by
+# running `pip show transformers` on the training host, /home/cc/.local).
+# This is the only version that has both required pieces:
+#   - transformers.core_model_loading (added in 5.x, required by the pickle)
+#   - "summarization" pipeline task (removed in the post-5.5.4 registry
+#     refactor, so we can't just take any 5.x)
+# If training ever moves to a newer transformers, update this to match.
 # NOTE: torch is installed separately in the Dockerfile from the CPU-only
 # wheel index to avoid pulling ~2GB of CUDA runtime we will never use on
 # the k3s CPU node.
-transformers>=4.48,<5
+transformers==5.5.4
 sentencepiece
