@@ -12,6 +12,7 @@ from faster_whisper import WhisperModel
 class FasterWhisperPyFuncModel(mlflow.pyfunc.PythonModel):
     def __init__(self):
         self.model = None
+        self.model_size_or_path = "small"
         self.device = "cpu"
         self.compute_type = "int8"
         self.beam_size = 5
@@ -22,15 +23,15 @@ class FasterWhisperPyFuncModel(mlflow.pyfunc.PythonModel):
         return state
 
     def load_context(self, context):
-        model_size_or_path = context.artifacts["asr_model"]
-
         model_config = getattr(context, "model_config", {}) or {}
+
+        self.model_size_or_path = model_config.get("model_size_or_path", "small")
         self.device = model_config.get("device", "cpu")
         self.compute_type = model_config.get("compute_type", "int8")
         self.beam_size = int(model_config.get("beam_size", 5))
 
         self.model = WhisperModel(
-            model_size_or_path,
+            self.model_size_or_path,
             device=self.device,
             compute_type=self.compute_type,
         )
@@ -128,7 +129,6 @@ def register_asr_model() -> None:
             mlflow.pyfunc.save_model(
                 path=str(local_model_dir),
                 python_model=pyfunc_model,
-                artifacts={"asr_model": model_size_or_path},
                 input_example=input_example,
                 pip_requirements=[
                     "mlflow==2.19.0",
@@ -136,6 +136,7 @@ def register_asr_model() -> None:
                     "pandas",
                 ],
                 model_config={
+                    "model_size_or_path": model_size_or_path,
                     "device": device,
                     "compute_type": compute_type,
                     "beam_size": beam_size,
