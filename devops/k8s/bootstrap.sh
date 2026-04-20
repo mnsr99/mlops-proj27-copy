@@ -47,6 +47,57 @@ fi
 echo "[0/9] /mnt/block is mounted. $(df -h /mnt/block | tail -1 | awk '{print $4" free"}')"
 
 # ---------------------------------------------------------------------------
+# 0b. Redirect k3s containerd image store onto /mnt/block
+#
+# The VM root disk (/, typically 37G on Chameleon) is too small to hold
+# containerd's image cache once the full stack is up (jitsi + platform +
+# monitoring = ~16G of layers in practice, plus CI-rebuild churn). When / hits
+# 85% kubelet turns on a DiskPressure taint and starts evicting pods — we
+# already lived that pain once, and "sudo kubectl delete" will not save you.
+#
+# Fix: symlink /var/lib/rancher/k3s/agent/containerd onto /mnt/block BEFORE
+# k3s ever starts, so every image layer lands directly on the 98G Cinder
+# volume. k3s follows the symlink transparently.
+#
+# Also write /etc/rancher/k3s/config.yaml to tighten kubelet's image GC
+# thresholds (default 85/80 lets old CI layers accumulate until they hurt).
+# ---------------------------------------------------------------------------
+echo ">>> Redirecting k3s containerd store to /mnt/block..."
+
+if [ -L /var/lib/rancher/k3s/agent/containerd ]; then
+    echo "    containerd symlink already in place, skipping."
+elif [ -e /var/lib/rancher/k3s/agent/containerd ]; then
+    # Existing real directory — only happens when this block was added after
+    # a previous bootstrap. Don't try to auto-migrate; bail loudly.
+    echo "    WARNING: /var/lib/rancher/k3s/agent/containerd is a real directory."
+    echo "    To migrate: stop k3s, rsync it onto /mnt/block/k3s-containerd,"
+    echo "    then replace with a symlink. Leaving as-is to avoid data loss."
+else
+    sudo mkdir -p /mnt/block/k3s-containerd
+    sudo mkdir -p /var/lib/rancher/k3s/agent
+    sudo ln -s /mnt/block/k3s-containerd /var/lib/rancher/k3s/agent/containerd
+    echo "    Created symlink: /var/lib/rancher/k3s/agent/containerd -> /mnt/block/k3s-containerd"
+fi
+
+# Kubelet config: reclaim image layers earlier than the default 85/80 so a
+# week of CI churn does not silently walk us to DiskPressure again.
+sudo mkdir -p /etc/rancher/k3s
+if [ ! -f /etc/rancher/k3s/config.yaml ]; then
+    sudo tee /etc/rancher/k3s/config.yaml >/dev/null <<'EOF'
+# Managed by devops/k8s/bootstrap.sh.
+# image-gc-high-threshold: disk % at which kubelet starts reclaiming images.
+# image-gc-low-threshold : disk % kubelet stops reclaiming at.
+# Defaults (85/80) are too loose for a 37G root with active CI — tighten here.
+kubelet-arg:
+  - "image-gc-high-threshold=75"
+  - "image-gc-low-threshold=60"
+EOF
+    echo "    Wrote /etc/rancher/k3s/config.yaml (image-gc 75/60)."
+else
+    echo "    /etc/rancher/k3s/config.yaml exists, leaving untouched."
+fi
+
+# ---------------------------------------------------------------------------
 # Step 0: Load snd-aloop kernel module for Jibri audio loopback (idempotent)
 # ---------------------------------------------------------------------------
 echo ">>> Ensuring snd-aloop kernel module is loaded..."
