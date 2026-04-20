@@ -24,18 +24,26 @@ MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://129.114.26.182:30900")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "minio")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "minio123")
 
-# Make sure MLflow registry/artifact resolution uses the shared platform
 os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
 os.environ["MLFLOW_S3_ENDPOINT_URL"] = MLFLOW_S3_ENDPOINT_URL
 os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
 os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
 
 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+try:
+    mlflow.set_registry_uri(MLFLOW_TRACKING_URI)
+except Exception:
+    pass
 
-# Registry model names from your shared MLflow UI
 ASR_MODEL_URI = os.environ.get("ASR_MODEL_URI", "models:/jitsi-asr/1")
-SUMMARIZATION_MODEL_URI = os.environ.get("SUMMARIZATION_MODEL_URI", "models:/jitsi-summarizer/6")
-SUMMARIZATION_MODEL_VERSION = os.environ.get("SUMMARIZATION_MODEL_VERSION", "jitsi-summarizer/6")
+SUMMARIZATION_MODEL_URI = os.environ.get(
+    "SUMMARIZATION_MODEL_URI",
+    "models:/jitsi-summarizer@production",
+)
+SUMMARIZATION_MODEL_VERSION = os.environ.get(
+    "SUMMARIZATION_MODEL_VERSION",
+    "jitsi-summarizer@production",
+)
 
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
 TRANSCRIPT_BUCKET = os.environ.get("TRANSCRIPT_BUCKET", "jitsi-data")
@@ -138,7 +146,9 @@ def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, 
         }
     ])
 
+    print(f"[ASR] Start predict for meeting_id={meeting_id}", flush=True)
     result = model.predict(df)
+    print("[ASR] Predict finished", flush=True)
 
     if isinstance(result, pd.DataFrame):
         records = result.to_dict(orient="records")
@@ -160,7 +170,10 @@ def run_summarization(transcript_text: str) -> str:
     model = get_summarization_model()
 
     df = pd.DataFrame([{"text": transcript_text}])
+
+    print("[SUM] Start summarization predict", flush=True)
     result = model.predict(df)
+    print("[SUM] Predict finished", flush=True)
 
     if isinstance(result, pd.DataFrame):
         if "summary" in result.columns:
