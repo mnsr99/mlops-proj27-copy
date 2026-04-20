@@ -1,8 +1,10 @@
-import requests
 import random
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
+
+import requests
 
 BASE_URL = "http://127.0.0.1:8000"
+
 
 def run_once():
     now = datetime.now(UTC)
@@ -15,6 +17,7 @@ def run_once():
             "ended_at": (now + timedelta(minutes=30)).isoformat(),
             "audio_object_key": "raw/audio/sample.wav",
             "status": "completed",
+            "asr_status": "completed",
         },
         timeout=30,
     )
@@ -46,14 +49,19 @@ def run_once():
         f"{BASE_URL}/reviews",
         json={
             "meeting_id": meeting_id,
+            "reviewer_id": "generator-bot",
             "rating": random.randint(3, 5),
+            "approved": True,
+            "correction_label": random.choice(["minor", "major"]),
             "edited_summary": "Team agreed on Friday delivery and task ownership.",
             "edited_action_items": "Test cleanup and verify edits.",
+            "review_notes": "Synthetic review payload with explicit required contract fields.",
         },
         timeout=30,
     ).raise_for_status()
 
     print(f"created meeting {meeting_id}")
+
 
 if __name__ == "__main__":
     for _ in range(5):

@@ -10,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - ./sql:/docker-entrypoint-initdb.d
+
   adminer:
     image: adminer
     container_name: adminer
@@ -28,8 +29,16 @@ services:
       - "9001:9001"
 
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     container_name: api
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: jitsi_mlops
+      DB_USER: user
+      DB_PASSWORD: jitsi_postgres
     ports:
       - "8000:8000"
     depends_on:

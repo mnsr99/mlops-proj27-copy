@@ -1,257 +1,166 @@
-# MLOps Project: Data Platform for Meeting Summarization
+# Data Platform Contract & Operations Guide
 
-## Overview
+## 1) Contract Freeze (canonical truth)
 
-This project implements an end-to-end MLOps data platform for training and evaluating meeting summarization models.
+### Feedback record contract (`reviews`)
 
-The system ingests both:
+**Policy**: exactly **one canonical review row per meeting** (`reviews.meeting_id` is `UNIQUE`).
 
-* **Production-style data** (simulated meeting outputs)
-* **External datasets** (QMSum)
+Required fields:
+- `review_id` (UUID, PK)
+- `meeting_id` (UUID, FK, UNIQUE)
+- `reviewer_id` (TEXT, NOT NULL)
+- `rating` (INT, 1..5, NOT NULL)
+- `approved` (BOOLEAN, NOT NULL)
+- `correction_label` (`none | minor | major | rewrite`, NOT NULL)
+- `edited_summary` (TEXT, NOT NULL)
+- `edited_action_items` (TEXT, NOT NULL)
+- `created_at` (TIMESTAMPTZ)
+- `updated_at` (TIMESTAMPTZ)
 
-All data is:
+Optional:
+- `review_notes` (TEXT, nullable)
 
-* normalized into a consistent schema
-* versioned
-* stored in S3-compatible object storage (MinIO)
+### Meeting lifecycle enums
 
----
+`meetings.status`:
+- `scheduled`
+- `in_progress`
+- `completed`
+- `failed`
+- `canceled`
 
-## System Architecture
+`meetings.asr_status`:
+- `not_requested`
+- `queued`
+- `processing`
+- `completed`
+- `failed`
 
-The platform is deployed on a cloud VM (Chameleon Cloud) and uses Docker Compose to orchestrate services:
+Both are enforced by database `CHECK` constraints.
 
-* **API service** (FastAPI)
-* **PostgreSQL** (metadata / relational storage)
-* **MinIO** (S3-compatible object storage)
-* **Adminer** (database UI)
+### Approved feedback export duplicate policy
 
----
-
-## Data Flow
-
-```mermaid
-flowchart LR
-    A[Generator Pipeline] -->|JSONL + manifest| B[MinIO: production bucket]
-    C[QMSum Raw Data] --> D[Ingestion Pipeline]
-    D -->|Normalized JSONL + manifest| B
-    B --> E[Versioned Training Datasets]
-```
-- Generator produces production-style data → stored in MinIO
-- External pipeline ingests QMSum → normalized → stored in MinIO
-- Both datasets are versioned and used for training
-
----
-
-## Online Feature Computation
-
-The system includes an online feature-computation path for inference-time processing.  
-When a transcript arrives, the API computes lightweight summarization features such as:
-- word count
-- speaker count
-- turn count
-- question count
-- action-item cue count
-- decision cue count
-
-These features are stored in PostgreSQL (`online_features`) and can be consumed by downstream summarization models or inference services.
+Default export policy is **`latest-per-meeting`** (latest approved review chosen deterministically).
+Alternative policy: `all-approved`.
 
 ---
 
-## Setup Instructions
+## 2) Environment variables and compose wiring
 
-### 1. Start Infrastructure
+### API / pipelines DB config
+All DB clients share `data/common/db.py`:
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 
-From `data/`:
+`data/docker-compose.yml` wires these explicitly for the API service.
 
-```bash
-docker compose up -d --build
-```
+### Export delivery controls
+- `FEEDBACK_EXPORT_PATH`
+- `FEEDBACK_EXPORT_POLICY` (`latest-per-meeting` or `all-approved`)
+- `TRAINING_HOST`
+- `TRAINING_USER`
+- `TRAINING_SSH_KEY_PATH`
 
-Verify:
+### Transitional dataset mode
+- `REQUIRE_TRANSCRIPT` (default true)
+- `APPROVED_ONLY` (default true)
 
-```bash
-docker ps
-```
-
----
-
-### 2. Access Services
-
-* API: http://<VM_IP>:8000
-* Adminer: http://<VM_IP>:5050
-* MinIO Console: http://<VM_IP>:9001
-
-Default MinIO credentials:
-
-```
-user: minio
-password: minio123
-```
+### ASR handoff controls
+- `ASR_CLAIM_BATCH_SIZE`
 
 ---
 
-## Data Pipelines
+## 3) Schema and migration order
 
-### 1. Production Data Pipeline
+Fresh bootstrap schema: `data/sql/schema.sql`.
 
-Generates synthetic meeting data and uploads it to MinIO.
+Migration-safe path for existing DBs:
+1. Apply `data/sql/migrations/001_feedback_audio_contract.sql`
+2. Deploy API
+3. Run pipelines in dry-run/manual mode
+4. Enable scheduled exporter + ASR handoff
 
-```bash
-cd data
-source .venv/bin/activate
-python generator/generator.py
-```
-
-Output:
-
-```
-s3://jitsi-data/v<timestamp>/
-```
-
-Example:
-
-```
-v20260407_030840/
-  train.jsonl
-  val.jsonl
-  test.jsonl
-  manifest.json
-```
+Migration details include:
+- Reviews contract columns + constraints + indexes
+- Meeting audio/ASR columns + enum checks
+- Backfill of review text fields from latest summaries/action_items where missing
+- Backfill of `asr_status` from transcript presence
 
 ---
 
-### 2. External Data Pipeline (QMSum)
+## 4) API contracts
 
-Ingests and normalizes the QMSum dataset.
+### Write endpoints
+- `POST /meetings`
+- `POST /transcripts`
+- `POST /summaries`
+- `POST /reviews`
 
-#### Step 1: Download dataset
+`POST /reviews` hardening:
+- Required retraining fields are enforced at write-time.
+- Transcript/summary fallback is **enrichment only** for missing edited fields.
+- If required fields are still missing after fallback, request fails with 4xx (422).
 
-```bash
-git clone https://github.com/Yale-LILY/QMSum.git
-```
+### Retrieval endpoints (stable)
+- `GET /transcripts/{transcript_id}`
+- `GET /transcripts/by_meeting/{meeting_id}`
+- `GET /meetings/{meeting_id}`
+- `GET /meetings/{meeting_id}/audio`
 
-#### Step 2: Copy raw data
-
-```bash
-mkdir -p external_data/qmsum_raw
-find QMSum/data/ALL -name "*.json" -exec cp {} external_data/qmsum_raw/ \;
-```
-
-#### Step 3: Run ingestion
-
-```bash
-python pipelines/ingest_qmsum.py
-```
-
-Output:
-
-```
-s3://jitsi-data/external/qmsum/qmsum_v<timestamp>/
-```
-
-Example:
-
-```
-external/qmsum/qmsum_v20260407_032624/
-  qmsum_train.jsonl
-  manifest.json
-```
+All preserve explicit `404` behavior when records are absent.
 
 ---
 
-## Data Schema
+## 5) Export policy and manifest semantics
 
-All datasets are normalized into a unified JSONL format:
-
-```json
-{
-  "dataset_version": "string",
-  "source": "QMSum | production",
-  "source_meeting_id": "string",
-  "query_id": "string",
-  "query_text": "string",
-  "input_transcript": "string",
-  "target_summary": "string",
-  "target_action_items": [],
-  "split": "train | val | test"
-}
-```
+`data/pipelines/export_feedback_jsonl.py` exports approved feedback using deterministic dedupe and emits manifest metadata:
+- policy used
+- `records_exported`
+- `malformed_records_skipped`
+- `duplicate_records_skipped`
+- `multi_review_meetings`
+- delivery checksum/size
+- transfer target (if SCP configured)
 
 ---
 
-## Object Storage Structure
+## 6) ASR handoff lifecycle and idempotency
 
-```
-jitsi-data/
-  v<timestamp>/                      # production data
-  external/
-    qmsum/
-      qmsum_v<timestamp>/            # external data
-```
+`data/pipelines/handoff_asr_jobs.py` uses atomic claim semantics:
+- `FOR UPDATE SKIP LOCKED`
+- `UPDATE ... RETURNING`
 
----
+This prevents concurrent runners from queueing the same meeting twice.
 
-## Key Design Decisions
-
-### 1. Dataset Versioning
-
-Each pipeline produces a timestamped dataset version:
-
-* enables reproducibility
-* allows comparison across training runs
-
-### 2. Unified Schema
-
-External and production data are transformed into a consistent format to:
-
-* simplify training pipelines
-* enable dataset mixing
-
-### 3. Object Storage (MinIO)
-
-Used instead of local files because:
-
-* scalable
-* cloud-compatible (S3 API)
-* standard in production ML systems
-
-### 4. Separation of Pipelines
-
-* `generator/` → production data
-* `pipelines/` → external data ingestion
+State transitions:
+- `not_requested -> queued -> processing -> completed`
+- `not_requested -> queued -> processing -> failed`
+- `failed -> queued` (retry)
 
 ---
 
-## Reproducibility
+## 7) Transitional dataset build behavior
 
-To fully reproduce the system:
-
-```bash
-git clone <repo>
-cd mlops-proj27/data
-docker compose up -d --build
-
-# run pipelines
-python generator/generator.py
-python pipelines/ingest_qmsum.py
-```
+`data/pipelines/build_dataset.py` now uses deterministic `latest-*` CTEs to avoid fan-out joins.
+Manifest includes skipped counters:
+- `missing_transcript`
+- `not_approved`
+- `missing_targets`
 
 ---
 
-## Results
+## 8) Validators and milestone observability
 
-* Production dataset version: `v20260407_030840`
-* External dataset version: `qmsum_v20260407_032624`
-* Data successfully stored in MinIO
+Validators in `data/pipelines/validators/`:
+- `validate_feedback_contract.py`
+- `validate_split_leakage.py`
 
----
-
-## Future Work
-
-* Add data validation and quality checks
-* Introduce training pipeline (model fine-tuning)
-* Add experiment tracking (MLflow)
-* Automate pipelines with orchestration (Airflow)
-
----
+Milestone metrics to track operationally:
+- transcript completeness
+- approval/edit/rating distributions
+- ASR queue lag/failure counts
+- periodic data-drift snapshot across rating/correction-label distributions
