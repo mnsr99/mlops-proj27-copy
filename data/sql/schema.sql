@@ -43,15 +43,12 @@ CREATE TABLE IF NOT EXISTS action_items (
 CREATE TABLE IF NOT EXISTS reviews (
     review_id UUID PRIMARY KEY,
     meeting_id UUID REFERENCES meetings(meeting_id),
-    reviewer_id TEXT NOT NULL,
-    rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
-    approved BOOLEAN NOT NULL,
-    correction_label TEXT NOT NULL CHECK (correction_label IN ('none', 'minor', 'major', 'rewrite')),
-    edited_summary TEXT NOT NULL,
-    edited_action_items TEXT NOT NULL,
-    review_notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    edited_summary TEXT,
+    edited_action_items TEXT,
+    rating INT,
+    edited_flag BOOLEAN DEFAULT FALSE,
+    approved BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reviews_meeting_id ON reviews (meeting_id);
