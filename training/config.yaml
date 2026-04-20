@@ -1,10 +1,12 @@
-candidate_name: baseline_bart_local
+candidate_name: baseline_bart_retraining_from_reviews
 seed: 42
 
 mlflow:
-  tracking_uri: "http://129.114.26.182:30500/"
+  tracking_uri: "http://129.114.26.182:30500"
   experiment_name: "jitsi-summarization"
-  run_name: "bart_baseline_local_run"
+  run_name: "bart_retraining_from_reviews"
+  registered_model_name: "jitsi-summarizer"
+  registered_model_alias: "production"
 
 data:
   dataset_name: null
@@ -12,7 +14,7 @@ data:
 
   train_file: "data/retraining_ready_train.jsonl"
   validation_file: "data/retraining_ready_val.jsonl"
-  test_file: null
+  test_file: "data/retraining_ready_test.jsonl"
 
   text_column: "input_transcript"
   summary_column: "target_summary"
@@ -31,7 +33,7 @@ model:
   max_target_length: 128
 
 train:
-  output_dir: "outputs/bart_baseline"
+  output_dir: "outputs/bart_retraining_from_reviews"
   learning_rate: 3.0e-5
   per_device_train_batch_size: 1
   per_device_eval_batch_size: 1
