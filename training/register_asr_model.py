@@ -10,6 +10,17 @@ from faster_whisper import WhisperModel
 
 
 class FasterWhisperPyFuncModel(mlflow.pyfunc.PythonModel):
+    def __init__(self):
+        self.model = None
+        self.device = "cpu"
+        self.compute_type = "int8"
+        self.beam_size = 5
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["model"] = None
+        return state
+
     def load_context(self, context):
         model_size_or_path = context.artifacts["asr_model"]
 
@@ -112,9 +123,11 @@ def register_asr_model() -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             local_model_dir = Path(tmpdir) / "registered_asr_model"
 
+            pyfunc_model = FasterWhisperPyFuncModel()
+
             mlflow.pyfunc.save_model(
                 path=str(local_model_dir),
-                python_model=FasterWhisperPyFuncModel(),
+                python_model=pyfunc_model,
                 artifacts={"asr_model": model_size_or_path},
                 input_example=input_example,
                 pip_requirements=[
