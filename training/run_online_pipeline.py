@@ -1,18 +1,15 @@
 import json
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import boto3
 import mlflow.pyfunc
 import pandas as pd
 import requests
 
-
-# =========================
-# Configuration
-# =========================
 
 DATA_API_BASE = os.environ.get("DATA_API_BASE", "http://129.114.26.182:30800")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://129.114.26.182:30900")
@@ -21,21 +18,28 @@ AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "minio123")
 
 ASR_MODEL_URI = os.environ.get("ASR_MODEL_URI", "models:/jitsi-asr/1")
 SUMMARIZATION_MODEL_URI = os.environ.get("SUMMARIZATION_MODEL_URI", "models:/jitsi-summarizer/6")
+SUMMARIZATION_MODEL_VERSION = os.environ.get("SUMMARIZATION_MODEL_VERSION", "jitsi-summarizer/6")
 
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
+TRANSCRIPT_BUCKET = os.environ.get("TRANSCRIPT_BUCKET", "jitsi-data")
+REVIEWER_ID = os.environ.get("REVIEWER_ID", "auto_test_user")
 
 
-# =========================
-# Helpers
-# =========================
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-def download_from_minio(bucket: str, object_key: str) -> str:
-    s3 = boto3.client(
+
+def get_s3_client():
+    return boto3.client(
         "s3",
         endpoint_url=MINIO_ENDPOINT,
         aws_access_key_id=AWS_ACCESS_KEY_ID,
         aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
     )
+
+
+def download_from_minio(bucket: str, object_key: str) -> str:
+    s3 = get_s3_client()
 
     suffix = Path(object_key).suffix or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -43,6 +47,16 @@ def download_from_minio(bucket: str, object_key: str) -> str:
 
     s3.download_file(bucket, object_key, local_path)
     return local_path
+
+
+def upload_text_to_minio(bucket: str, object_key: str, text: str) -> None:
+    s3 = get_s3_client()
+    s3.put_object(
+        Bucket=bucket,
+        Key=object_key,
+        Body=text.encode("utf-8"),
+        ContentType="text/plain",
+    )
 
 
 def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, Any]:
@@ -69,9 +83,7 @@ def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, 
 def run_summarization(transcript_text: str) -> str:
     model = mlflow.pyfunc.load_model(SUMMARIZATION_MODEL_URI)
 
-    # 你的 summarization pyfunc 之前是吃 'text' 列
     df = pd.DataFrame([{"text": transcript_text}])
-
     result = model.predict(df)
 
     if isinstance(result, pd.DataFrame):
@@ -87,205 +99,200 @@ def run_summarization(transcript_text: str) -> str:
 
 def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     resp = requests.post(url, json=payload, timeout=120)
-    resp.raise_for_status()
+
+    if not resp.ok:
+        print("\nPOST failed")
+        print("URL:", url)
+        print("Payload:")
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print("Status code:", resp.status_code)
+        print("Response text:")
+        print(resp.text)
+        resp.raise_for_status()
+
     try:
         return resp.json()
     except Exception:
         return {"raw_text": resp.text}
 
 
-def get_json(url: str) -> Dict[str, Any]:
+def get_json_or_text(url: str) -> Any:
     resp = requests.get(url, timeout=120)
-    resp.raise_for_status()
+    if not resp.ok:
+        print("\nGET failed")
+        print("URL:", url)
+        print("Status code:", resp.status_code)
+        print("Response text:")
+        print(resp.text)
+        resp.raise_for_status()
+
     try:
         return resp.json()
     except Exception:
-        return {"raw_text": resp.text}
+        return resp.text
 
 
-# =========================
-# API Wrappers
-# =========================
-
-def create_meeting(meeting_id: str, bucket: str, object_key: str) -> Dict[str, Any]:
-    """
-    注意：
-    这里的 payload 字段名需要和你们 /meetings 的真实 schema 对齐。
-    先给你一个很常见的写法。
-    """
+def create_meeting(audio_object_key: str, source: str = "minio_audio") -> Any:
     payload = {
-        "meeting_id": meeting_id,
-        "audio_bucket": bucket,
-        "audio_object_key": object_key,
+        "source": source,
+        "started_at": now_iso(),
+        "ended_at": now_iso(),
+        "audio_object_key": audio_object_key,
+        "status": "scheduled",
+        "asr_status": "not_requested",
     }
     return post_json(f"{DATA_API_BASE}/meetings", payload)
 
 
+def get_meeting(meeting_id: str) -> Any:
+    return get_json_or_text(f"{DATA_API_BASE}/meetings/{meeting_id}")
+
+
+def get_meeting_audio(meeting_id: str) -> Any:
+    return get_json_or_text(f"{DATA_API_BASE}/meetings/{meeting_id}/audio")
+
+
 def create_transcript(
     meeting_id: str,
-    language: str,
     transcript_text: str,
-    segments: List[Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    注意：
-    这里的 payload 字段名也需要按你们 /transcripts 实际定义微调。
-    """
+    transcript_object_key: str,
+) -> Any:
     payload = {
         "meeting_id": meeting_id,
-        "language": language,
-        "transcript": transcript_text,
-        "segments": segments,
+        "transcript_text": transcript_text,
+        "transcript_object_key": transcript_object_key,
     }
     return post_json(f"{DATA_API_BASE}/transcripts", payload)
 
 
-def get_transcript_by_meeting(meeting_id: str) -> Dict[str, Any]:
-    return get_json(f"{DATA_API_BASE}/transcripts/by_meeting/{meeting_id}")
+def get_transcript_by_meeting(meeting_id: str) -> Any:
+    return get_json_or_text(f"{DATA_API_BASE}/transcripts/by_meeting/{meeting_id}")
 
 
 def create_summary(
     meeting_id: str,
-    transcript_id: Optional[str],
     summary_text: str,
-) -> Dict[str, Any]:
-    """
-    注意：
-    transcript_id 是否需要，取决于你们 summaries API 的 schema。
-    """
+    action_item_text: str,
+    model_version: str,
+) -> Any:
     payload = {
         "meeting_id": meeting_id,
-        "transcript_id": transcript_id,
-        "summary": summary_text,
+        "model_version": model_version,
+        "summary_text": summary_text,
+        "action_item_text": action_item_text,
     }
     return post_json(f"{DATA_API_BASE}/summaries", payload)
 
 
 def create_review(
     meeting_id: str,
-    summary_id: Optional[str],
+    reviewer_id: str,
     rating: int,
     approved: bool,
-    edited_summary: Optional[str] = None,
-    comment: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    这是把 summary output 喂给 review API 的示例。
-    retraining 最后一般会从 reviews / approved feedback 导出到 feedback_records.jsonl
-    """
+    correction_label: str,
+    edited_summary: str,
+    edited_action_items: str,
+    review_notes: str,
+) -> Any:
     payload = {
         "meeting_id": meeting_id,
-        "summary_id": summary_id,
+        "reviewer_id": reviewer_id,
         "rating": rating,
         "approved": approved,
+        "correction_label": correction_label,
         "edited_summary": edited_summary,
-        "comment": comment,
+        "edited_action_items": edited_action_items,
+        "review_notes": review_notes,
     }
     return post_json(f"{DATA_API_BASE}/reviews", payload)
 
-
-# =========================
-# Main Pipeline
-# =========================
 
 def main():
     meeting_id = os.environ.get("MEETING_ID", "demo_001")
     bucket = os.environ.get("MINIO_BUCKET", "audio-files")
     object_key = os.environ.get("MINIO_OBJECT_KEY")
+    language = os.environ.get("ASR_LANGUAGE", DEFAULT_LANGUAGE)
 
     if not object_key:
         raise ValueError("MINIO_OBJECT_KEY is required.")
 
-    language = os.environ.get("ASR_LANGUAGE", DEFAULT_LANGUAGE)
+    print("=== Step 0: Create meeting record ===")
+    meeting_resp = create_meeting(audio_object_key=object_key, source="minio_audio")
+    print("Meeting API response:")
+    print(meeting_resp)
 
-    print(f"=== Step 0: Create / register meeting ===")
-    try:
-        meeting_resp = create_meeting(meeting_id, bucket, object_key)
-        print("Meeting API response:")
-        print(json.dumps(meeting_resp, indent=2, ensure_ascii=False))
-    except Exception as e:
-        print(f"Create meeting failed (can still continue if meeting already exists): {e}")
-
-    print(f"\n=== Step 1: Download audio from MinIO ===")
+    print("\n=== Step 1: Download audio from MinIO ===")
     local_audio_path = download_from_minio(bucket, object_key)
     print(f"Downloaded to: {local_audio_path}")
 
     try:
-        print(f"\n=== Step 2: Run ASR model ===")
+        print("\n=== Step 2: Run ASR model ===")
         asr_output = run_asr(local_audio_path, meeting_id, language)
-        print("ASR output:")
         print(json.dumps(asr_output, indent=2, ensure_ascii=False))
 
         transcript_text = asr_output["transcript"]
-        segments = asr_output.get("segments", [])
-        asr_language = asr_output.get("language", language)
 
-        print(f"\n=== Step 3: Store ASR output into /transcripts ===")
+        transcript_object_key = f"transcripts/{meeting_id}.txt"
+
+        print("\n=== Step 3: Upload transcript text to MinIO ===")
+        upload_text_to_minio(TRANSCRIPT_BUCKET, transcript_object_key, transcript_text)
+        print(f"Uploaded transcript to minio://{TRANSCRIPT_BUCKET}/{transcript_object_key}")
+
+        print("\n=== Step 4: Store ASR output into /transcripts ===")
         transcript_resp = create_transcript(
             meeting_id=meeting_id,
-            language=asr_language,
             transcript_text=transcript_text,
-            segments=segments,
+            transcript_object_key=transcript_object_key,
         )
         print("Transcript API response:")
-        print(json.dumps(transcript_resp, indent=2, ensure_ascii=False))
+        print(transcript_resp)
 
-        transcript_id = (
-            transcript_resp.get("transcript_id")
-            or transcript_resp.get("id")
-            or transcript_resp.get("transcript", {}).get("id")
-            if isinstance(transcript_resp, dict) else None
-        )
-
-        print(f"\n=== Step 4: Read transcript back from API ===")
+        print("\n=== Step 5: Read transcript back from API ===")
         transcript_record = get_transcript_by_meeting(meeting_id)
         print("Transcript fetched by meeting:")
-        print(json.dumps(transcript_record, indent=2, ensure_ascii=False))
+        print(transcript_record)
 
         if isinstance(transcript_record, dict):
-            if "transcript" in transcript_record and isinstance(transcript_record["transcript"], str):
-                summarization_input = transcript_record["transcript"]
-            elif "data" in transcript_record and isinstance(transcript_record["data"], dict):
-                summarization_input = transcript_record["data"].get("transcript", transcript_text)
-            else:
-                summarization_input = transcript_text
+            summarization_input = (
+                transcript_record.get("transcript_text")
+                or transcript_record.get("transcript")
+                or transcript_text
+            )
         else:
-            summarization_input = transcript_text
+            summarization_input = str(transcript_record)
 
-        print(f"\n=== Step 5: Run summarization model ===")
+        print("\n=== Step 6: Run summarization model ===")
         summary_text = run_summarization(summarization_input)
         print("Summary output:")
         print(summary_text)
 
-        print(f"\n=== Step 6: Store summary into /summaries ===")
+        action_item_text = ""
+
+        print("\n=== Step 7: Store summary into /summaries ===")
         summary_resp = create_summary(
             meeting_id=meeting_id,
-            transcript_id=transcript_id,
             summary_text=summary_text,
+            action_item_text=action_item_text,
+            model_version=SUMMARIZATION_MODEL_VERSION,
         )
         print("Summary API response:")
-        print(json.dumps(summary_resp, indent=2, ensure_ascii=False))
+        print(summary_resp)
 
-        summary_id = (
-            summary_resp.get("summary_id")
-            or summary_resp.get("id")
-            or summary_resp.get("summary", {}).get("id")
-            if isinstance(summary_resp, dict) else None
-        )
-
-        print(f"\n=== Step 7: Create a review record ===")
+        print("\n=== Step 8: Store review into /reviews ===")
         review_resp = create_review(
             meeting_id=meeting_id,
-            summary_id=summary_id,
+            reviewer_id=REVIEWER_ID,
             rating=5,
             approved=True,
+            correction_label="none",
             edited_summary=summary_text,
-            comment="auto test review",
+            edited_action_items=action_item_text,
+            review_notes="auto-created test review",
         )
         print("Review API response:")
-        print(json.dumps(review_resp, indent=2, ensure_ascii=False))
+        print(review_resp)
 
-        print(f"\n=== Pipeline finished successfully ===")
+        print("\n=== Pipeline finished successfully ===")
 
     finally:
         try:
