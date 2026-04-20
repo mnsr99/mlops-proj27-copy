@@ -10,7 +10,7 @@ data:
   dataset_name: null
   dataset_config: null
 
-  train_file: "data/sample_retraining_data.jsonl"
+  train_file: "data/retraining_ready_train.jsonl"
   validation_file: "data/retraining_ready_val.jsonl"
   test_file: null
 
@@ -20,8 +20,8 @@ data:
   validation_split: 0.2
   make_test_from_validation: false
 
-  max_train_samples: 3
-  max_eval_samples: 1
+  max_train_samples: null
+  max_eval_samples: null
   max_test_samples: null
 
 model:
