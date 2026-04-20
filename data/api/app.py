@@ -315,16 +315,6 @@ def create_review(payload: ReviewCreate):
                 created_at,
                 updated_at
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (meeting_id)
-            DO UPDATE SET
-                reviewer_id = EXCLUDED.reviewer_id,
-                rating = EXCLUDED.rating,
-                approved = EXCLUDED.approved,
-                correction_label = EXCLUDED.correction_label,
-                edited_summary = EXCLUDED.edited_summary,
-                edited_action_items = EXCLUDED.edited_action_items,
-                review_notes = EXCLUDED.review_notes,
-                updated_at = EXCLUDED.updated_at
             RETURNING review_id
             """,
             (
