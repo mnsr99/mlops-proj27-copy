@@ -14,8 +14,8 @@ metadata:
 data:
   DB_HOST: "postgres-postgresql.platform.svc.cluster.local"
   DB_PORT: "5432"
-  DB_NAME: "postgres"
-  DB_USER: "postgres"
+  DB_NAME: "jitsi_mlops"
+  DB_USER: "user"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -46,7 +46,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: postgres-postgresql
-              key: postgres-password
+              key: password
         readinessProbe:
           httpGet:
             path: /health
@@ -120,7 +120,7 @@ spec:
           valueFrom:
             secretKeyRef:
               name: postgres-postgresql
-              key: postgres-password
+              key: password
         volumeMounts:
         - name: sql
           mountPath: /sql
