@@ -24,25 +24,12 @@ MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://129.114.26.182:30900")
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "minio")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "minio123")
 
-os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
-os.environ["MLFLOW_S3_ENDPOINT_URL"] = MLFLOW_S3_ENDPOINT_URL
-os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
-os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
-
-mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-try:
-    mlflow.set_registry_uri(MLFLOW_TRACKING_URI)
-except Exception:
-    pass
-
 ASR_MODEL_URI = os.environ.get("ASR_MODEL_URI", "models:/jitsi-asr/1")
-SUMMARIZATION_MODEL_URI = os.environ.get(
-    "SUMMARIZATION_MODEL_URI",
-    "models:/jitsi-summarizer@production",
-)
-SUMMARIZATION_MODEL_VERSION = os.environ.get(
-    "SUMMARIZATION_MODEL_VERSION",
-    "jitsi-summarizer@production",
+
+# Served summarizer endpoint
+SUMMARIZER_PREDICT_URL = os.environ.get(
+    "SUMMARIZER_PREDICT_URL",
+    "http://129.114.26.182:30810/predict",
 )
 
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
@@ -62,8 +49,19 @@ MEETING_MANIFEST_PATH = Path(
 )
 MEETING_MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
 
+# MLflow env only needed for ASR now
+os.environ["MLFLOW_TRACKING_URI"] = MLFLOW_TRACKING_URI
+os.environ["MLFLOW_S3_ENDPOINT_URL"] = MLFLOW_S3_ENDPOINT_URL
+os.environ["AWS_ACCESS_KEY_ID"] = AWS_ACCESS_KEY_ID
+os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SECRET_ACCESS_KEY
+
+mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+try:
+    mlflow.set_registry_uri(MLFLOW_TRACKING_URI)
+except Exception:
+    pass
+
 _ASR_MODEL = None
-_SUMMARIZATION_MODEL = None
 
 
 def now_iso() -> str:
@@ -144,20 +142,6 @@ def get_asr_model():
     return _ASR_MODEL
 
 
-def get_summarization_model():
-    global _SUMMARIZATION_MODEL
-    if _SUMMARIZATION_MODEL is None:
-        print(f"[MLflow] tracking_uri={mlflow.get_tracking_uri()}", flush=True)
-        print(
-            f"[MLflow] MLFLOW_S3_ENDPOINT_URL={os.environ.get('MLFLOW_S3_ENDPOINT_URL')}",
-            flush=True,
-        )
-        print(f"[Model] Loading summarization model from {SUMMARIZATION_MODEL_URI}", flush=True)
-        _SUMMARIZATION_MODEL = mlflow.pyfunc.load_model(SUMMARIZATION_MODEL_URI)
-        print("[Model] Summarization model loaded", flush=True)
-    return _SUMMARIZATION_MODEL
-
-
 def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, Any]:
     model = get_asr_model()
 
@@ -190,48 +174,6 @@ def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, 
         raise RuntimeError(f"Unexpected ASR record type: {type(records[0])}")
 
     return records[0]
-
-
-def extract_summary_text(result: Any) -> str:
-    if isinstance(result, pd.DataFrame):
-        if "summary" in result.columns and len(result) > 0:
-            return str(result.iloc[0]["summary"]).strip()
-        if len(result.columns) > 0 and len(result) > 0:
-            return str(result.iloc[0, 0]).strip()
-        return ""
-
-    if isinstance(result, list):
-        if not result:
-            return ""
-        first = result[0]
-        if isinstance(first, dict):
-            for key in ("summary", "generated_text", "summary_text", "text"):
-                if key in first and first[key]:
-                    return str(first[key]).strip()
-        return str(first).strip()
-
-    if isinstance(result, dict):
-        for key in ("summary", "generated_text", "summary_text", "text"):
-            if key in result and result[key]:
-                return str(result[key]).strip()
-
-    return str(result).strip()
-
-
-def run_summarization(transcript_text: str) -> str:
-    model = get_summarization_model()
-
-    df = pd.DataFrame([{"text": transcript_text}])
-
-    print("[SUM] Start summarization predict", flush=True)
-    result = model.predict(df)
-    print("[SUM] Predict finished", flush=True)
-
-    summary_text = extract_summary_text(result)
-    if not summary_text:
-        raise RuntimeError(f"Summarization model returned empty output: {result}")
-
-    return summary_text
 
 
 def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -289,14 +231,6 @@ def create_meeting(audio_object_key: str, source: str = "minio_audio") -> Any:
     return post_json(f"{DATA_API_BASE}/meetings", payload)
 
 
-def get_meeting(meeting_id: str) -> Any:
-    return get_json_or_text(f"{DATA_API_BASE}/meetings/{meeting_id}")
-
-
-def get_meeting_audio(meeting_id: str) -> Any:
-    return get_json_or_text(f"{DATA_API_BASE}/meetings/{meeting_id}/audio")
-
-
 def create_transcript(
     meeting_id: str,
     transcript_text: str,
@@ -332,10 +266,6 @@ def create_summary(
     return post_json(f"{DATA_API_BASE}/summaries", payload)
 
 
-def get_summary_by_meeting(meeting_id: str) -> Any:
-    return get_json_or_text(f"{DATA_API_BASE}/summaries/by_meeting/{meeting_id}")
-
-
 def extract_meeting_id(meeting_resp: Any) -> str:
     if isinstance(meeting_resp, dict):
         for key in ("meeting_id", "id", "uuid"):
@@ -345,6 +275,66 @@ def extract_meeting_id(meeting_resp: Any) -> str:
     raise RuntimeError(
         f"Could not find meeting_id in create_meeting response: {meeting_resp}"
     )
+
+
+def call_served_summarizer(meeting_id: str, transcript_text: str) -> Dict[str, Any]:
+    payload = {
+        "meeting_id": meeting_id,
+        "transcript": transcript_text,
+    }
+
+    print(f"[SUM API] POST {SUMMARIZER_PREDICT_URL}", flush=True)
+    resp = requests.post(
+        SUMMARIZER_PREDICT_URL,
+        json=payload,
+        timeout=(REQUEST_CONNECT_TIMEOUT, REQUEST_READ_TIMEOUT),
+    )
+
+    if not resp.ok:
+        print("\nSummarizer /predict failed", flush=True)
+        print("URL:", SUMMARIZER_PREDICT_URL, flush=True)
+        print("Payload:", flush=True)
+        print(json.dumps(payload, indent=2, ensure_ascii=False), flush=True)
+        print("Status code:", resp.status_code, flush=True)
+        print("Response text:", flush=True)
+        print(resp.text, flush=True)
+        resp.raise_for_status()
+
+    try:
+        data = resp.json()
+    except Exception:
+        raise RuntimeError(f"Summarizer /predict returned non-JSON response: {resp.text}")
+
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Unexpected /predict response type: {type(data)}")
+
+    return data
+
+
+def extract_summary_and_actions(predict_resp: Dict[str, Any]) -> Dict[str, str]:
+    summary_text = str(predict_resp.get("summary", "")).strip()
+
+    action_items = predict_resp.get("action_items", [])
+    if isinstance(action_items, list):
+        clean_items = [str(x).strip() for x in action_items if str(x).strip()]
+        action_item_text = "\n".join(clean_items) if clean_items else DEFAULT_ACTION_ITEMS
+    elif isinstance(action_items, str):
+        action_item_text = action_items.strip() or DEFAULT_ACTION_ITEMS
+    else:
+        action_item_text = DEFAULT_ACTION_ITEMS
+
+    model_name = str(predict_resp.get("model_name", "jitsi-summarizer")).strip() or "jitsi-summarizer"
+    model_alias = str(predict_resp.get("model_alias", "production")).strip() or "production"
+    model_version = f"{model_name}@{model_alias}"
+
+    if not summary_text:
+        raise RuntimeError(f"Empty summary returned from /predict: {predict_resp}")
+
+    return {
+        "summary_text": summary_text,
+        "action_item_text": action_item_text,
+        "model_version": model_version,
+    }
 
 
 def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[str, Any]:
@@ -415,19 +405,22 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
         else:
             summarization_input = str(transcript_record)
 
-        print("\n=== Step 6: Run summarization model ===", flush=True)
-        summary_text = run_summarization(summarization_input)
-        print("Summary output:", flush=True)
-        print(summary_text, flush=True)
+        print("\n=== Step 6: Call served summarization /predict API ===", flush=True)
+        predict_resp = call_served_summarizer(meeting_id, summarization_input)
+        print("Summarizer /predict response:", flush=True)
+        print(json.dumps(predict_resp, indent=2, ensure_ascii=False), flush=True)
 
-        action_item_text = DEFAULT_ACTION_ITEMS
+        parsed = extract_summary_and_actions(predict_resp)
+        summary_text = parsed["summary_text"]
+        action_item_text = parsed["action_item_text"]
+        model_version = parsed["model_version"]
 
         print("\n=== Step 7: Store summary into /summaries ===", flush=True)
         summary_resp = create_summary(
             meeting_id=meeting_id,
             summary_text=summary_text,
             action_item_text=action_item_text,
-            model_version=SUMMARIZATION_MODEL_VERSION,
+            model_version=model_version,
         )
         print("Summary API response:", flush=True)
         print(summary_resp, flush=True)
@@ -465,7 +458,7 @@ def main():
     print(f"[Config] MLFLOW_S3_ENDPOINT_URL={MLFLOW_S3_ENDPOINT_URL}", flush=True)
     print(f"[Config] MINIO_ENDPOINT={MINIO_ENDPOINT}", flush=True)
     print(f"[Config] ASR_MODEL_URI={ASR_MODEL_URI}", flush=True)
-    print(f"[Config] SUMMARIZATION_MODEL_URI={SUMMARIZATION_MODEL_URI}", flush=True)
+    print(f"[Config] SUMMARIZER_PREDICT_URL={SUMMARIZER_PREDICT_URL}", flush=True)
     print(f"[Config] MEETING_MANIFEST_PATH={MEETING_MANIFEST_PATH}", flush=True)
 
     if object_key:
