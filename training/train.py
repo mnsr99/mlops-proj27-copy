@@ -314,14 +314,9 @@ class SummarizationPyFuncModel(mlflow.pyfunc.PythonModel):
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
-        device = 0 if torch.cuda.is_available() else -1
-
-        self.pipe = pipeline(
-            "text2text-generation",
-            model=self.model,
-            tokenizer=self.tokenizer,
-            device=device,
-        )
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+        self.model.eval()
 
     def predict(self, context, model_input: pd.DataFrame) -> pd.DataFrame:
         if isinstance(model_input, pd.DataFrame):
@@ -334,26 +329,27 @@ class SummarizationPyFuncModel(mlflow.pyfunc.PythonModel):
         else:
             texts = [str(model_input)]
 
-        outputs = self.pipe(
+        inputs = self.tokenizer(
             texts,
+            return_tensors="pt",
+            padding=True,
             truncation=True,
-            max_new_tokens=128,
+            max_length=512,
         )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
-        summaries = []
-        for out in outputs:
-            if isinstance(out, list):
-                out = out[0]
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=128,
+                num_beams=4,
+            )
 
-            if isinstance(out, dict):
-                if "generated_text" in out:
-                    summaries.append(out["generated_text"])
-                elif "summary_text" in out:
-                    summaries.append(out["summary_text"])
-                else:
-                    summaries.append(str(out))
-            else:
-                summaries.append(str(out))
+        summaries = self.tokenizer.batch_decode(
+            output_ids,
+            skip_special_tokens=True,
+        )
+        summaries = [s.strip() for s in summaries]
 
         return pd.DataFrame({"summary": summaries})
 
