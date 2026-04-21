@@ -36,11 +36,17 @@ app = FastAPI()
 
 class MeetingCreate(BaseModel):
     source: str
-    started_at: datetime
+    started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     audio_object_key: str
+    audio_checksum: Optional[str] = None
+    audio_duration_seconds: Optional[int] = None
     status: MeetingStatus = MeetingStatus.SCHEDULED
     asr_status: AsrStatus = AsrStatus.NOT_REQUESTED
+    asr_job_id: Optional[str] = None
+    asr_last_error: Optional[str] = None
+    asr_requested_at: Optional[datetime] = None
+    asr_completed_at: Optional[datetime] = None
 
 
 class TranscriptCreate(BaseModel):
@@ -76,8 +82,20 @@ def create_meeting(payload: MeetingCreate):
         cur.execute(
             """
             INSERT INTO meetings (
-                meeting_id, source, started_at, ended_at, audio_object_key, status, asr_status
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                meeting_id,
+                source,
+                started_at,
+                ended_at,
+                audio_object_key,
+                audio_checksum,
+                audio_duration_seconds,
+                status,
+                asr_status,
+                asr_job_id,
+                asr_last_error,
+                asr_requested_at,
+                asr_completed_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 meeting_id,
@@ -85,8 +103,14 @@ def create_meeting(payload: MeetingCreate):
                 payload.started_at,
                 payload.ended_at,
                 payload.audio_object_key,
+                payload.audio_checksum,
+                payload.audio_duration_seconds,
                 payload.status.value,
                 payload.asr_status.value,
+                payload.asr_job_id,
+                payload.asr_last_error,
+                payload.asr_requested_at,
+                payload.asr_completed_at,
             ),
         )
     return {"meeting_id": meeting_id}
@@ -97,8 +121,21 @@ def get_meeting(meeting_id: str):
     with db_cursor() as (_, cur):
         cur.execute(
             """
-            SELECT meeting_id, source, started_at, ended_at, audio_object_key, status, asr_status,
-                   asr_job_id, asr_last_error, created_at
+            SELECT
+                meeting_id,
+                source,
+                started_at,
+                ended_at,
+                audio_object_key,
+                audio_checksum,
+                audio_duration_seconds,
+                status,
+                asr_status,
+                asr_job_id,
+                asr_last_error,
+                asr_requested_at,
+                asr_completed_at,
+                created_at
             FROM meetings
             WHERE meeting_id = %s
             """,
@@ -114,11 +151,15 @@ def get_meeting(meeting_id: str):
         "started_at": row[2],
         "ended_at": row[3],
         "audio_object_key": row[4],
-        "status": row[5],
-        "asr_status": row[6],
-        "asr_job_id": row[7],
-        "asr_last_error": row[8],
-        "created_at": row[9],
+        "audio_checksum": row[5],
+        "audio_duration_seconds": row[6],
+        "status": row[7],
+        "asr_status": row[8],
+        "asr_job_id": row[9],
+        "asr_last_error": row[10],
+        "asr_requested_at": row[11],
+        "asr_completed_at": row[12],
+        "created_at": row[13],
     }
 
 
