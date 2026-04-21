@@ -48,6 +48,10 @@ SUMMARIZATION_MODEL_VERSION = os.environ.get(
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
 TRANSCRIPT_BUCKET = os.environ.get("TRANSCRIPT_BUCKET", "jitsi-data")
 REVIEWER_ID = os.environ.get("REVIEWER_ID", "auto_test_user")
+DEFAULT_ACTION_ITEMS = os.environ.get(
+    "DEFAULT_ACTION_ITEMS",
+    "No action items identified.",
+)
 
 REQUEST_CONNECT_TIMEOUT = int(os.environ.get("REQUEST_CONNECT_TIMEOUT", "10"))
 REQUEST_READ_TIMEOUT = int(os.environ.get("REQUEST_READ_TIMEOUT", "120"))
@@ -131,7 +135,10 @@ def get_asr_model():
     global _ASR_MODEL
     if _ASR_MODEL is None:
         print(f"[MLflow] tracking_uri={mlflow.get_tracking_uri()}", flush=True)
-        print(f"[MLflow] MLFLOW_S3_ENDPOINT_URL={os.environ.get('MLFLOW_S3_ENDPOINT_URL')}", flush=True)
+        print(
+            f"[MLflow] MLFLOW_S3_ENDPOINT_URL={os.environ.get('MLFLOW_S3_ENDPOINT_URL')}",
+            flush=True,
+        )
         print(f"[Model] Loading ASR model from {ASR_MODEL_URI}", flush=True)
         _ASR_MODEL = mlflow.pyfunc.load_model(ASR_MODEL_URI)
         print("[Model] ASR model loaded", flush=True)
@@ -142,7 +149,10 @@ def get_summarization_model():
     global _SUMMARIZATION_MODEL
     if _SUMMARIZATION_MODEL is None:
         print(f"[MLflow] tracking_uri={mlflow.get_tracking_uri()}", flush=True)
-        print(f"[MLflow] MLFLOW_S3_ENDPOINT_URL={os.environ.get('MLFLOW_S3_ENDPOINT_URL')}", flush=True)
+        print(
+            f"[MLflow] MLFLOW_S3_ENDPOINT_URL={os.environ.get('MLFLOW_S3_ENDPOINT_URL')}",
+            flush=True,
+        )
         print(f"[Model] Loading summarization model from {SUMMARIZATION_MODEL_URI}", flush=True)
         _SUMMARIZATION_MODEL = mlflow.pyfunc.load_model(SUMMARIZATION_MODEL_URI)
         print("[Model] Summarization model loaded", flush=True)
@@ -152,14 +162,16 @@ def get_summarization_model():
 def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, Any]:
     model = get_asr_model()
 
-    df = pd.DataFrame([
-        {
-            "meeting_id": meeting_id,
-            "audio_path": local_audio_path,
-            "language": language,
-            "source": "minio_audio",
-        }
-    ])
+    df = pd.DataFrame(
+        [
+            {
+                "meeting_id": meeting_id,
+                "audio_path": local_audio_path,
+                "language": language,
+                "source": "minio_audio",
+            }
+        ]
+    )
 
     print(f"[ASR] Start predict for meeting_id={meeting_id}", flush=True)
     result = model.predict(df)
@@ -181,6 +193,32 @@ def run_asr(local_audio_path: str, meeting_id: str, language: str) -> Dict[str, 
     return records[0]
 
 
+def extract_summary_text(result: Any) -> str:
+    if isinstance(result, pd.DataFrame):
+        if "summary" in result.columns and len(result) > 0:
+            return str(result.iloc[0]["summary"]).strip()
+        if len(result.columns) > 0 and len(result) > 0:
+            return str(result.iloc[0, 0]).strip()
+        return ""
+
+    if isinstance(result, list):
+        if not result:
+            return ""
+        first = result[0]
+        if isinstance(first, dict):
+            for key in ("summary", "generated_text", "summary_text", "text"):
+                if key in first and first[key]:
+                    return str(first[key]).strip()
+        return str(first).strip()
+
+    if isinstance(result, dict):
+        for key in ("summary", "generated_text", "summary_text", "text"):
+            if key in result and result[key]:
+                return str(result[key]).strip()
+
+    return str(result).strip()
+
+
 def run_summarization(transcript_text: str) -> str:
     model = get_summarization_model()
 
@@ -190,15 +228,11 @@ def run_summarization(transcript_text: str) -> str:
     result = model.predict(df)
     print("[SUM] Predict finished", flush=True)
 
-    if isinstance(result, pd.DataFrame):
-        if "summary" in result.columns:
-            return str(result.iloc[0]["summary"])
-        return str(result.iloc[0, 0])
+    summary_text = extract_summary_text(result)
+    if not summary_text:
+        raise RuntimeError(f"Summarization model returned empty output: {result}")
 
-    if isinstance(result, list) and result:
-        return str(result[0])
-
-    return str(result)
+    return summary_text
 
 
 def post_json(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -287,11 +321,14 @@ def create_summary(
     action_item_text: str,
     model_version: str,
 ) -> Any:
+    safe_summary = (summary_text or "").strip()
+    safe_actions = (action_item_text or "").strip() or DEFAULT_ACTION_ITEMS
+
     payload = {
         "meeting_id": meeting_id,
         "model_version": model_version,
-        "summary_text": summary_text,
-        "action_item_text": action_item_text,
+        "summary_text": safe_summary,
+        "action_item_text": safe_actions,
     }
     return post_json(f"{DATA_API_BASE}/summaries", payload)
 
@@ -310,14 +347,22 @@ def create_review(
     edited_action_items: str,
     review_notes: str,
 ) -> Any:
+    safe_summary = (edited_summary or "").strip()
+    safe_action_items = (edited_action_items or "").strip()
+
+    if not safe_summary:
+        safe_summary = "Auto-generated summary."
+    if not safe_action_items:
+        safe_action_items = DEFAULT_ACTION_ITEMS
+
     payload = {
         "meeting_id": meeting_id,
         "reviewer_id": reviewer_id,
         "rating": rating,
         "approved": approved,
         "correction_label": correction_label,
-        "edited_summary": edited_summary,
-        "edited_action_items": edited_action_items,
+        "edited_summary": safe_summary,
+        "edited_action_items": safe_action_items,
         "review_notes": review_notes,
     }
     return post_json(f"{DATA_API_BASE}/reviews", payload)
@@ -366,6 +411,7 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
         transcript_text = (
             asr_output.get("transcript")
             or asr_output.get("text")
+            or asr_output.get("transcript_text")
             or ""
         ).strip()
 
@@ -399,6 +445,7 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
             summarization_input = (
                 transcript_record.get("transcript_text")
                 or transcript_record.get("transcript")
+                or transcript_record.get("text")
                 or transcript_text
             )
         else:
@@ -409,7 +456,7 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
         print("Summary output:", flush=True)
         print(summary_text, flush=True)
 
-        action_item_text = ""
+        action_item_text = DEFAULT_ACTION_ITEMS
 
         print("\n=== Step 7: Store summary into /summaries ===", flush=True)
         summary_resp = create_summary(
