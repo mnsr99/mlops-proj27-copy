@@ -47,7 +47,6 @@ SUMMARIZATION_MODEL_VERSION = os.environ.get(
 
 DEFAULT_LANGUAGE = os.environ.get("DEFAULT_LANGUAGE", "en")
 TRANSCRIPT_BUCKET = os.environ.get("TRANSCRIPT_BUCKET", "jitsi-data")
-REVIEWER_ID = os.environ.get("REVIEWER_ID", "auto_test_user")
 DEFAULT_ACTION_ITEMS = os.environ.get(
     "DEFAULT_ACTION_ITEMS",
     "No action items identified.",
@@ -337,41 +336,6 @@ def get_summary_by_meeting(meeting_id: str) -> Any:
     return get_json_or_text(f"{DATA_API_BASE}/summaries/by_meeting/{meeting_id}")
 
 
-def create_review(
-    meeting_id: str,
-    reviewer_id: str,
-    rating: int,
-    approved: bool,
-    correction_label: str,
-    edited_summary: str,
-    edited_action_items: str,
-    review_notes: str,
-) -> Any:
-    safe_summary = (edited_summary or "").strip()
-    safe_action_items = (edited_action_items or "").strip()
-
-    if not safe_summary:
-        safe_summary = "Auto-generated summary."
-    if not safe_action_items:
-        safe_action_items = DEFAULT_ACTION_ITEMS
-
-    payload = {
-        "meeting_id": meeting_id,
-        "reviewer_id": reviewer_id,
-        "rating": rating,
-        "approved": approved,
-        "correction_label": correction_label,
-        "edited_summary": safe_summary,
-        "edited_action_items": safe_action_items,
-        "review_notes": review_notes,
-    }
-    return post_json(f"{DATA_API_BASE}/reviews", payload)
-
-
-def get_reviews_by_meeting(meeting_id: str) -> Any:
-    return get_json_or_text(f"{DATA_API_BASE}/reviews/by_meeting/{meeting_id}")
-
-
 def extract_meeting_id(meeting_resp: Any) -> str:
     if isinstance(meeting_resp, dict):
         for key in ("meeting_id", "id", "uuid"):
@@ -468,26 +432,13 @@ def process_single_audio(bucket: str, object_key: str, language: str) -> Dict[st
         print("Summary API response:", flush=True)
         print(summary_resp, flush=True)
 
-        print("\n=== Step 8: Store review into /reviews ===", flush=True)
-        review_resp = create_review(
-            meeting_id=meeting_id,
-            reviewer_id=REVIEWER_ID,
-            rating=5,
-            approved=True,
-            correction_label="none",
-            edited_summary=summary_text,
-            edited_action_items=action_item_text,
-            review_notes="auto-created test review",
-        )
-        print("Review API response:", flush=True)
-        print(review_resp, flush=True)
-
         print("\n=== Pipeline finished successfully for this file ===", flush=True)
 
         return {
             "meeting_id": meeting_id,
             "object_key": object_key,
             "status": "success",
+            "summary_stored": True,
         }
 
     finally:
