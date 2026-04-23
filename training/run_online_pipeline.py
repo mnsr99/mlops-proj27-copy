@@ -35,7 +35,7 @@ try:
 except Exception:
     pass
 
-ASR_MODEL_URI = os.environ.get("ASR_MODEL_URI", "models:/jitsi-asr/1")
+ASR_MODEL_URI = os.environ.get("ASR_MODEL_URI", "models:/jitsi-asr/production")
 SUMMARIZATION_MODEL_URI = os.environ.get(
     "SUMMARIZATION_MODEL_URI",
     "models:/jitsi-summarizer@production",
