@@ -88,7 +88,7 @@ class FasterWhisperPyFuncModel(mlflow.pyfunc.PythonModel):
 
 
 def register_asr_model() -> None:
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://129.114.26.182:30500")
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://129.114.27.10:30500")
     experiment_name = os.environ.get("MLFLOW_EXPERIMENT_NAME", "jitsi-asr")
     registered_model_name = os.environ.get("MLFLOW_ASR_REGISTERED_MODEL_NAME", "jitsi-asr")
 
