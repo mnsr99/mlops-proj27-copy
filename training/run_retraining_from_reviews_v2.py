@@ -28,7 +28,7 @@ def write_last_fingerprint(fp: str) -> None:
 
 
 def main():
-    run_cmd([sys.executable, "prepare_retraining_dataset_from_api.py", "--write-empty"])
+    run_cmd([sys.executable, "prepare_retraining_dataset_from_api_v2.py", "--write-empty"])
 
     if not STATS_PATH.exists():
         raise RuntimeError(f"Stats file not found: {STATS_PATH}")
