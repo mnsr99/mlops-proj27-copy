@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+logs/
+*.log
+*.out
+
+# Training outputs
+outputs/
+
+# Generated retraining data
+data/retraining_ready_train.jsonl
+data/retraining_ready_val.jsonl
+data/retraining_ready_test.jsonl
+data/retraining_stats.json
+
+# Local environment files
+.env
+.venv/
+venv/
+
+# OS / editor files
+.DS_Store
+.vscode/
+.idea/

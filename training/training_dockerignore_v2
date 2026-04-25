@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+logs/
+outputs/
+archive/
+examples/
+data/retraining_ready_train.jsonl
+data/retraining_ready_val.jsonl
+data/retraining_ready_test.jsonl
+data/retraining_stats.json
+.git
+.gitignore
